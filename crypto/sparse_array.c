@@ -1,5 +1,5 @@
 /*
- * Copyright 2019 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2019-2020 The OpenSSL Project Authors. All Rights Reserved.
  * Copyright (c) 2019, Oracle and/or its affiliates.  All rights reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
@@ -10,10 +10,10 @@
 
 #include <openssl/crypto.h>
 #include <openssl/bn.h>
-#include "internal/sparse_array.h"
+#include "crypto/sparse_array.h"
 
 /*
- * How many bits are used to index each level in the tree structre?
+ * How many bits are used to index each level in the tree structure?
  * This setting determines the number of pointers stored in each node of the
  * tree used to represent the sparse array.  Having more pointers reduces the
  * depth of the tree but potentially wastes more memory.  That is, this is a
@@ -162,7 +162,7 @@ void *OPENSSL_SA_get(const OPENSSL_SA *sa, ossl_uintmax_t n)
     int level;
     void **p, *r = NULL;
 
-    if (sa == NULL)
+    if (sa == NULL || sa->nelem == 0)
         return NULL;
 
     if (n <= sa->top) {

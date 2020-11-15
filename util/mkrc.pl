@@ -1,5 +1,5 @@
 #! /usr/bin/env perl
-# Copyright 2006-2018 The OpenSSL Project Authors. All Rights Reserved.
+# Copyright 2006-2020 The OpenSSL Project Authors. All Rights Reserved.
 #
 # Licensed under the Apache License 2.0 (the "License").  You may not use
 # this file except in compliance with the License.  You can obtain a copy
@@ -11,8 +11,11 @@ use warnings;
 use lib ".";
 use configdata;
 
-my $cversion = "$config{major},$config{minor},$config{patch}";
-my $version = "$config{major}.$config{minor}.$config{patch}$config{prerelease}$config{build_metadata}";
+my $cversion = "$config{version}";
+my $version = "$config{full_version}";
+
+# RC syntax for versions uses commas as separators, rather than period
+$cversion =~ s|\.|,|g;
 
 my $filename = $ARGV[0];
 my $description = "OpenSSL library";
@@ -22,7 +25,7 @@ if ( $filename =~ /openssl/i ) {
     $vft = "VFT_APP";
 }
 
-my $YEAR = [localtime()]->[5] + 1900;
+my $YEAR = [gmtime($ENV{SOURCE_DATE_EPOCH} || time())]->[5] + 1900;
 print <<___;
 #include <winver.h>
 

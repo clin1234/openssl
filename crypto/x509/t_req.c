@@ -1,5 +1,5 @@
 /*
- * Copyright 1995-2018 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 1995-2020 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -24,7 +24,7 @@ int X509_REQ_print_fp(FILE *fp, X509_REQ *x)
     int ret;
 
     if ((b = BIO_new(BIO_s_file())) == NULL) {
-        X509err(X509_F_X509_REQ_PRINT_FP, ERR_R_BUF_LIB);
+        ERR_raise(ERR_LIB_X509, ERR_R_BUF_LIB);
         return 0;
     }
     BIO_set_fp(b, fp, BIO_NOCLOSE);
@@ -127,6 +127,10 @@ int X509_REQ_print_ex(BIO *bp, X509_REQ *x, unsigned long nmflags,
                 if ((j = i2a_ASN1_OBJECT(bp, aobj)) > 0) {
                     ii = 0;
                     count = X509_ATTRIBUTE_count(a);
+                    if (count == 0) {
+                      ERR_raise(ERR_LIB_X509, X509_R_INVALID_ATTRIBUTES);
+                      return 0;
+                    }
  get_next:
                     at = X509_ATTRIBUTE_get0_type(a, ii);
                     type = at->type;
@@ -200,7 +204,7 @@ int X509_REQ_print_ex(BIO *bp, X509_REQ *x, unsigned long nmflags,
 
     return 1;
  err:
-    X509err(X509_F_X509_REQ_PRINT_EX, ERR_R_BUF_LIB);
+    ERR_raise(ERR_LIB_X509, ERR_R_BUF_LIB);
     return 0;
 }
 

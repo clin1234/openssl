@@ -8,7 +8,7 @@
  */
 
 #include "internal/cryptlib.h"
-#include "bn_lcl.h"
+#include "bn_local.h"
 
 BIGNUM *BN_mod_sqrt(BIGNUM *in, const BIGNUM *a, const BIGNUM *p, BN_CTX *ctx)
 /*
@@ -38,7 +38,7 @@ BIGNUM *BN_mod_sqrt(BIGNUM *in, const BIGNUM *a, const BIGNUM *p, BN_CTX *ctx)
             return ret;
         }
 
-        BNerr(BN_F_BN_MOD_SQRT, BN_R_P_IS_NOT_PRIME);
+        ERR_raise(ERR_LIB_BN, BN_R_P_IS_NOT_PRIME);
         return NULL;
     }
 
@@ -125,7 +125,8 @@ BIGNUM *BN_mod_sqrt(BIGNUM *in, const BIGNUM *a, const BIGNUM *p, BN_CTX *ctx)
          *         = a.
          *
          * (This is due to A.O.L. Atkin,
-         * <URL: http://listserv.nodak.edu/scripts/wa.exe?A2=ind9211&L=nmbrthry&O=T&P=562>,
+         * Subject: Square Roots and Cognate Matters modulo p=8n+5.
+         * URL: https://listserv.nodak.edu/cgi-bin/wa.exe?A2=ind9211&L=NMBRTHRY&P=4026
          * November 1992.)
          */
 
@@ -179,7 +180,7 @@ BIGNUM *BN_mod_sqrt(BIGNUM *in, const BIGNUM *a, const BIGNUM *p, BN_CTX *ctx)
             if (!BN_set_word(y, i))
                 goto end;
         } else {
-            if (!BN_priv_rand(y, BN_num_bits(p), 0, 0))
+            if (!BN_priv_rand_ex(y, BN_num_bits(p), 0, 0, ctx))
                 goto end;
             if (BN_ucmp(y, p) >= 0) {
                 if (!(p->neg ? BN_add : BN_sub) (y, y, p))
@@ -196,7 +197,7 @@ BIGNUM *BN_mod_sqrt(BIGNUM *in, const BIGNUM *a, const BIGNUM *p, BN_CTX *ctx)
             goto end;
         if (r == 0) {
             /* m divides p */
-            BNerr(BN_F_BN_MOD_SQRT, BN_R_P_IS_NOT_PRIME);
+            ERR_raise(ERR_LIB_BN, BN_R_P_IS_NOT_PRIME);
             goto end;
         }
     }
@@ -208,7 +209,7 @@ BIGNUM *BN_mod_sqrt(BIGNUM *in, const BIGNUM *a, const BIGNUM *p, BN_CTX *ctx)
          * than just bad luck. Even if p is not prime, we should have found
          * some y such that r == -1.
          */
-        BNerr(BN_F_BN_MOD_SQRT, BN_R_TOO_MANY_ITERATIONS);
+        ERR_raise(ERR_LIB_BN, BN_R_TOO_MANY_ITERATIONS);
         goto end;
     }
 
@@ -223,7 +224,7 @@ BIGNUM *BN_mod_sqrt(BIGNUM *in, const BIGNUM *a, const BIGNUM *p, BN_CTX *ctx)
     if (!BN_mod_exp(y, y, q, p, ctx))
         goto end;
     if (BN_is_one(y)) {
-        BNerr(BN_F_BN_MOD_SQRT, BN_R_P_IS_NOT_PRIME);
+        ERR_raise(ERR_LIB_BN, BN_R_P_IS_NOT_PRIME);
         goto end;
     }
 
@@ -307,7 +308,7 @@ BIGNUM *BN_mod_sqrt(BIGNUM *in, const BIGNUM *a, const BIGNUM *p, BN_CTX *ctx)
         while (!BN_is_one(t)) {
             i++;
             if (i == e) {
-                BNerr(BN_F_BN_MOD_SQRT, BN_R_NOT_A_SQUARE);
+                ERR_raise(ERR_LIB_BN, BN_R_NOT_A_SQUARE);
                 goto end;
             }
             if (!BN_mod_mul(t, t, t, p, ctx))
@@ -341,7 +342,7 @@ BIGNUM *BN_mod_sqrt(BIGNUM *in, const BIGNUM *a, const BIGNUM *p, BN_CTX *ctx)
             err = 1;
 
         if (!err && 0 != BN_cmp(x, A)) {
-            BNerr(BN_F_BN_MOD_SQRT, BN_R_NOT_A_SQUARE);
+            ERR_raise(ERR_LIB_BN, BN_R_NOT_A_SQUARE);
             err = 1;
         }
     }

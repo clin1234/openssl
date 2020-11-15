@@ -1,5 +1,5 @@
 /*
- * Copyright 2019 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2019-2020 The OpenSSL Project Authors. All Rights Reserved.
  * Copyright (c) 2019, Oracle and/or its affiliates.  All rights reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
@@ -9,16 +9,18 @@
  */
 
 #include <string.h>
-#include <inttypes.h>
 #include <openssl/params.h>
 #include "testutil.h"
 
-#ifdef OPENSSL_SYS_WINDOWS
-# define strcasecmp _stricmp
-#endif
+/* On machines that dont support <inttypes.h> just disable the tests */
+#if !defined(OPENSSL_NO_INTTYPES_H)
+
+# ifdef OPENSSL_SYS_WINDOWS
+#  define strcasecmp _stricmp
+# endif
 
 typedef struct {
-    const OSSL_PARAM *param;
+    OSSL_PARAM *param;
     int32_t i32;
     int64_t i64;
     uint32_t u32;
@@ -37,7 +39,7 @@ static int param_conversion_load_stanza(PARAM_CONVERSION *pc, const STANZA *s)
     static uint32_t datum_u32, ref_u32;
     static uint64_t datum_u64, ref_u64;
     static double datum_d, ref_d;
-    static const OSSL_PARAM params[] = {
+    static OSSL_PARAM params[] = {
         OSSL_PARAM_int32("int32",   &datum_i32),
         OSSL_PARAM_int64("int64",   &datum_i64),
         OSSL_PARAM_uint32("uint32", &datum_u32),
@@ -320,15 +322,26 @@ end:
     return res;
 }
 
+#endif /* OPENSSL_NO_INTTYPES_H */
+
 OPT_TEST_DECLARE_USAGE("file...\n")
 
 int setup_tests(void)
 {
-    size_t n = test_get_argument_count();
+    size_t n;
 
+    if (!test_skip_common_options()) {
+        TEST_error("Error parsing test options\n");
+        return 0;
+    }
+
+    n = test_get_argument_count();
     if (n == 0)
         return 0;
 
+#if !defined(OPENSSL_NO_INTTYPES_H)
     ADD_ALL_TESTS(run_param_file_tests, n);
+#endif /* OPENSSL_NO_INTTYPES_H */
+
     return 1;
 }
