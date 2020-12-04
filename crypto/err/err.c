@@ -312,21 +312,6 @@ unsigned long ERR_get_error(void)
     return get_error_values(EV_POP, NULL, NULL, NULL, NULL, NULL);
 }
 
-unsigned long ERR_get_error_line(const char **file, int *line)
-{
-    return get_error_values(EV_POP, file, line, NULL, NULL, NULL);
-}
-
-unsigned long ERR_get_error_func(const char **func)
-{
-    return get_error_values(EV_POP, NULL, NULL, func, NULL, NULL);
-}
-
-unsigned long ERR_get_error_data(const char **data, int *flags)
-{
-    return get_error_values(EV_POP, NULL, NULL, NULL, data, flags);
-}
-
 unsigned long ERR_get_error_all(const char **file, int *line,
                                 const char **func,
                                 const char **data, int *flags)
@@ -335,6 +320,11 @@ unsigned long ERR_get_error_all(const char **file, int *line,
 }
 
 #ifndef OPENSSL_NO_DEPRECATED_3_0
+unsigned long ERR_get_error_line(const char **file, int *line)
+{
+    return get_error_values(EV_POP, file, line, NULL, NULL, NULL);
+}
+
 unsigned long ERR_get_error_line_data(const char **file, int *line,
                                       const char **data, int *flags)
 {
@@ -603,8 +593,7 @@ const char *ERR_reason_error_string(unsigned long e)
     return ((p == NULL) ? NULL : p->string);
 }
 
-/* TODO(3.0): arg ignored for now */
-static void err_delete_thread_state(void *arg)
+static void err_delete_thread_state(void *unused)
 {
     ERR_STATE *state = CRYPTO_THREAD_get_local(&err_thread_local);
     if (state == NULL)
