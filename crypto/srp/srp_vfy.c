@@ -1,5 +1,5 @@
 /*
- * Copyright 2004-2020 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2004-2021 The OpenSSL Project Authors. All Rights Reserved.
  * Copyright (c) 2004, EdelKey Project. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
@@ -10,6 +10,9 @@
  * Originally written by Christophe Renou and Peter Sylvester,
  * for the EdelKey project.
  */
+
+/* All the SRP APIs in this file are deprecated */
+#define OPENSSL_SUPPRESS_DEPRECATED
 
 #ifndef OPENSSL_NO_SRP
 # include "internal/cryptlib.h"
@@ -548,6 +551,7 @@ SRP_user_pwd *SRP_VBASE_get1_by_user(SRP_VBASE *vb, char *username)
     unsigned char digv[SHA_DIGEST_LENGTH];
     unsigned char digs[SHA_DIGEST_LENGTH];
     EVP_MD_CTX *ctxt = NULL;
+    EVP_MD *md = NULL;
 
     if (vb == NULL)
         return NULL;
@@ -571,21 +575,27 @@ SRP_user_pwd *SRP_VBASE_get1_by_user(SRP_VBASE *vb, char *username)
 
     if (RAND_priv_bytes(digv, SHA_DIGEST_LENGTH) <= 0)
         goto err;
+    md = EVP_MD_fetch(NULL, SN_sha1, NULL);
+    if (md == NULL)
+        goto err;
     ctxt = EVP_MD_CTX_new();
     if (ctxt == NULL
-        || !EVP_DigestInit_ex(ctxt, EVP_sha1(), NULL)
+        || !EVP_DigestInit_ex(ctxt, md, NULL)
         || !EVP_DigestUpdate(ctxt, vb->seed_key, strlen(vb->seed_key))
         || !EVP_DigestUpdate(ctxt, username, strlen(username))
         || !EVP_DigestFinal_ex(ctxt, digs, NULL))
         goto err;
     EVP_MD_CTX_free(ctxt);
     ctxt = NULL;
+    EVP_MD_free(md);
+    md = NULL;
     if (SRP_user_pwd_set0_sv(user,
-                               BN_bin2bn(digs, SHA_DIGEST_LENGTH, NULL),
-                               BN_bin2bn(digv, SHA_DIGEST_LENGTH, NULL)))
+                             BN_bin2bn(digs, SHA_DIGEST_LENGTH, NULL),
+                             BN_bin2bn(digv, SHA_DIGEST_LENGTH, NULL)))
         return user;
 
  err:
+    EVP_MD_free(md);
     EVP_MD_CTX_free(ctxt);
     SRP_user_pwd_free(user);
     return NULL;
@@ -709,7 +719,7 @@ int SRP_create_verifier_BN_ex(const char *user, const char *pass, BIGNUM **salt,
     BIGNUM *x = NULL;
     BN_CTX *bn_ctx = BN_CTX_new_ex(libctx);
     unsigned char tmp2[MAX_LEN];
-    BIGNUM *salttmp = NULL;
+    BIGNUM *salttmp = NULL, *verif;
 
     if ((user == NULL) ||
         (pass == NULL) ||
@@ -732,17 +742,18 @@ int SRP_create_verifier_BN_ex(const char *user, const char *pass, BIGNUM **salt,
     if (x == NULL)
         goto err;
 
-    *verifier = BN_new();
-    if (*verifier == NULL)
+    verif = BN_new();
+    if (verif == NULL)
         goto err;
 
-    if (!BN_mod_exp(*verifier, g, x, N, bn_ctx)) {
-        BN_clear_free(*verifier);
+    if (!BN_mod_exp(verif, g, x, N, bn_ctx)) {
+        BN_clear_free(verif);
         goto err;
     }
 
     result = 1;
     *salt = salttmp;
+    *verifier = verif;
 
  err:
     if (salt != NULL && *salt != salttmp)

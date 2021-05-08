@@ -1,5 +1,5 @@
 /*
- * Copyright 1995-2020 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 1995-2021 The OpenSSL Project Authors. All Rights Reserved.
  * Copyright (c) 2002, Oracle and/or its affiliates. All rights reserved
  * Copyright 2005 Nokia. All rights reserved.
  *
@@ -49,9 +49,6 @@ typedef unsigned int u_int;
 # include <openssl/dh.h>
 #endif
 #include <openssl/rsa.h>
-#ifndef OPENSSL_NO_SRP
-# include <openssl/srp.h>
-#endif
 #include "s_apps.h"
 #include "timeouts.h"
 #ifdef CHARSET_EBCDIC
@@ -230,56 +227,7 @@ static int psk_find_session_cb(SSL *ssl, const unsigned char *identity,
 }
 
 #ifndef OPENSSL_NO_SRP
-/* This is a context that we pass to callbacks */
-typedef struct srpsrvparm_st {
-    char *login;
-    SRP_VBASE *vb;
-    SRP_user_pwd *user;
-} srpsrvparm;
 static srpsrvparm srp_callback_parm;
-
-/*
- * This callback pretends to require some asynchronous logic in order to
- * obtain a verifier. When the callback is called for a new connection we
- * return with a negative value. This will provoke the accept etc to return
- * with an LOOKUP_X509. The main logic of the reinvokes the suspended call
- * (which would normally occur after a worker has finished) and we set the
- * user parameters.
- */
-static int ssl_srp_server_param_cb(SSL *s, int *ad, void *arg)
-{
-    srpsrvparm *p = (srpsrvparm *) arg;
-    int ret = SSL3_AL_FATAL;
-
-    if (p->login == NULL && p->user == NULL) {
-        p->login = SSL_get_srp_username(s);
-        BIO_printf(bio_err, "SRP username = \"%s\"\n", p->login);
-        return -1;
-    }
-
-    if (p->user == NULL) {
-        BIO_printf(bio_err, "User %s doesn't exist\n", p->login);
-        goto err;
-    }
-
-    if (SSL_set_srp_server_param
-        (s, p->user->N, p->user->g, p->user->s, p->user->v,
-         p->user->info) < 0) {
-        *ad = SSL_AD_INTERNAL_ERROR;
-        goto err;
-    }
-    BIO_printf(bio_err,
-               "SRP parameters set: username = \"%s\" info=\"%s\" \n",
-               p->login, p->user->info);
-    ret = SSL_ERROR_NONE;
-
- err:
-    SRP_user_pwd_free(p->user);
-    p->user = NULL;
-    p->login = NULL;
-    return ret;
-}
-
 #endif
 
 static int local_argc = 0;
@@ -524,8 +472,8 @@ static int get_ocsp_resp_from_responder(SSL *s, tlsextstatusctx *srctx,
     x = SSL_get_certificate(s);
     aia = X509_get1_ocsp(x);
     if (aia != NULL) {
-        if (!OSSL_HTTP_parse_url(sk_OPENSSL_STRING_value(aia, 0),
-                                 &host, &port, NULL, &path, &use_ssl)) {
+        if (!OSSL_HTTP_parse_url(sk_OPENSSL_STRING_value(aia, 0), &use_ssl,
+                                 NULL, &host, &port, NULL, &path, NULL, NULL)) {
             BIO_puts(bio_err, "cert_status: can't parse AIA URL\n");
             goto err;
         }
@@ -724,7 +672,8 @@ static int not_resumable_sess_cb(SSL *s, int is_forward_secure)
 }
 
 typedef enum OPTION_choice {
-    OPT_ERR = -1, OPT_EOF = 0, OPT_HELP, OPT_ENGINE,
+    OPT_COMMON,
+    OPT_ENGINE,
     OPT_4, OPT_6, OPT_ACCEPT, OPT_PORT, OPT_UNIX, OPT_UNLINK, OPT_NACCEPT,
     OPT_VERIFY, OPT_NAMEOPT, OPT_UPPER_V_VERIFY, OPT_CONTEXT, OPT_CERT, OPT_CRL,
     OPT_CRL_DOWNLOAD, OPT_SERVERINFO, OPT_CERTFORM, OPT_KEY, OPT_KEYFORM,
@@ -926,9 +875,9 @@ const OPTIONS s_server_options[] = {
     {"psk", OPT_PSK, 's', "PSK in hex (without 0x)"},
     {"psk_session", OPT_PSK_SESS, '<', "File to read PSK SSL session from"},
 #ifndef OPENSSL_NO_SRP
-    {"srpvfile", OPT_SRPVFILE, '<', "The verifier file for SRP"},
+    {"srpvfile", OPT_SRPVFILE, '<', "(deprecated) The verifier file for SRP"},
     {"srpuserseed", OPT_SRPUSERSEED, 's',
-     "A seed string for a default user salt"},
+     "(deprecated) A seed string for a default user salt"},
 #endif
 
     OPT_SECTION("Protocol and version"),
@@ -1029,11 +978,11 @@ int s_server_main(int argc, char *argv[])
     int no_dhe = 0;
     int nocert = 0, ret = 1;
     int noCApath = 0, noCAfile = 0, noCAstore = 0;
-    int s_cert_format = FORMAT_PEM, s_key_format = FORMAT_PEM;
-    int s_dcert_format = FORMAT_PEM, s_dkey_format = FORMAT_PEM;
+    int s_cert_format = FORMAT_UNDEF, s_key_format = FORMAT_UNDEF;
+    int s_dcert_format = FORMAT_UNDEF, s_dkey_format = FORMAT_UNDEF;
     int rev = 0, naccept = -1, sdebug = 0;
     int socket_family = AF_UNSPEC, socket_type = SOCK_STREAM, protocol = 0;
-    int state = 0, crl_format = FORMAT_PEM, crl_download = 0;
+    int state = 0, crl_format = FORMAT_UNDEF, crl_download = 0;
     char *host = NULL;
     char *port = OPENSSL_strdup(PORT);
     unsigned char *context = NULL;
@@ -1389,10 +1338,10 @@ int s_server_main(int argc, char *argv[])
         case OPT_STATUS_URL:
 #ifndef OPENSSL_NO_OCSP
             s_tlsextstatus = 1;
-            if (!OSSL_HTTP_parse_url(opt_arg(),
+            if (!OSSL_HTTP_parse_url(opt_arg(), &tlscstatp.use_ssl, NULL,
                                      &tlscstatp.host, &tlscstatp.port, NULL,
-                                     &tlscstatp.path, &tlscstatp.use_ssl)) {
-                BIO_printf(bio_err, "Error parsing URL\n");
+                                     &tlscstatp.path, NULL, NULL)) {
+                BIO_printf(bio_err, "Error parsing -status_url argument\n");
                 goto end;
             }
 #endif
@@ -1662,6 +1611,9 @@ int s_server_main(int argc, char *argv[])
     if (argc != 0)
         goto opthelp;
 
+    if (!app_RAND_load())
+        goto end;
+
 #ifndef OPENSSL_NO_NEXTPROTONEG
     if (min_version == TLS1_3_VERSION && next_proto_neg_in != NULL) {
         BIO_printf(bio_err, "Cannot supply -nextprotoneg with TLSv1.3\n");
@@ -1736,12 +1688,13 @@ int s_server_main(int argc, char *argv[])
         if (s_key == NULL)
             goto end;
 
-        s_cert = load_cert_pass(s_cert_file, 1, pass, "server certificate");
+        s_cert = load_cert_pass(s_cert_file, s_cert_format, 1, pass,
+                                "server certificate");
 
         if (s_cert == NULL)
             goto end;
         if (s_chain_file != NULL) {
-            if (!load_certs(s_chain_file, &s_chain, NULL,
+            if (!load_certs(s_chain_file, 0, &s_chain, NULL,
                             "server certificate chain"))
                 goto end;
         }
@@ -1752,7 +1705,7 @@ int s_server_main(int argc, char *argv[])
             if (s_key2 == NULL)
                 goto end;
 
-            s_cert2 = load_cert_pass(s_cert_file2, 1, pass,
+            s_cert2 = load_cert_pass(s_cert_file2, s_cert_format, 1, pass,
                                 "second server certificate");
 
             if (s_cert2 == NULL)
@@ -1775,7 +1728,7 @@ int s_server_main(int argc, char *argv[])
 
     if (crl_file != NULL) {
         X509_CRL *crl;
-        crl = load_crl(crl_file, "CRL");
+        crl = load_crl(crl_file, crl_format, 0, "CRL");
         if (crl == NULL)
             goto end;
         crls = sk_X509_CRL_new_null();
@@ -1797,7 +1750,7 @@ int s_server_main(int argc, char *argv[])
         if (s_dkey == NULL)
             goto end;
 
-        s_dcert = load_cert_pass(s_dcert_file, 1, dpass,
+        s_dcert = load_cert_pass(s_dcert_file, s_dcert_format, 1, dpass,
                                  "second server certificate");
 
         if (s_dcert == NULL) {
@@ -1805,7 +1758,7 @@ int s_server_main(int argc, char *argv[])
             goto end;
         }
         if (s_dchain_file != NULL) {
-            if (!load_certs(s_dchain_file, &s_dchain, NULL,
+            if (!load_certs(s_dchain_file, 0, &s_dchain, NULL,
                             "second server certificate chain"))
                 goto end;
         }
@@ -1831,7 +1784,7 @@ int s_server_main(int argc, char *argv[])
         s_key_file2 = NULL;
     }
 
-    ctx = SSL_CTX_new(meth);
+    ctx = SSL_CTX_new_ex(app_get0_libctx(), app_get0_propq(), meth);
     if (ctx == NULL) {
         ERR_print_errors(bio_err);
         goto end;
@@ -1956,7 +1909,7 @@ int s_server_main(int argc, char *argv[])
     }
 
     if (s_cert2) {
-        ctx2 = SSL_CTX_new(meth);
+        ctx2 = SSL_CTX_new_ex(app_get0_libctx(), app_get0_propq(), meth);
         if (ctx2 == NULL) {
             ERR_print_errors(bio_err);
             goto end;
@@ -2023,9 +1976,9 @@ int s_server_main(int argc, char *argv[])
         EVP_PKEY *dhpkey = NULL;
 
         if (dhfile != NULL)
-            dhpkey = load_keyparams(dhfile, 0, "DH", "DH parameters");
+            dhpkey = load_keyparams(dhfile, FORMAT_UNDEF, 0, "DH", "DH parameters");
         else if (s_cert_file != NULL)
-            dhpkey = load_keyparams(s_cert_file, 0, "DH", "DH parameters");
+            dhpkey = load_keyparams(s_cert_file, FORMAT_UNDEF, 0, "DH", "DH parameters");
 
         if (dhpkey != NULL) {
             BIO_printf(bio_s_out, "Setting temp DH parameters\n");
@@ -2057,7 +2010,8 @@ int s_server_main(int argc, char *argv[])
 
         if (ctx2 != NULL) {
             if (dhfile != NULL) {
-                EVP_PKEY *dhpkey2 = load_keyparams(s_cert_file2, 0, "DH",
+                EVP_PKEY *dhpkey2 = load_keyparams(s_cert_file2, FORMAT_UNDEF,
+                                                   0, "DH",
                                                    "DH parameters");
 
                 if (dhpkey2 != NULL) {
@@ -2182,20 +2136,9 @@ int s_server_main(int argc, char *argv[])
 
 #ifndef OPENSSL_NO_SRP
     if (srp_verifier_file != NULL) {
-        srp_callback_parm.vb = SRP_VBASE_new(srpuserseed);
-        srp_callback_parm.user = NULL;
-        srp_callback_parm.login = NULL;
-        if ((ret =
-             SRP_VBASE_init(srp_callback_parm.vb,
-                            srp_verifier_file)) != SRP_NO_ERROR) {
-            BIO_printf(bio_err,
-                       "Cannot initialize SRP verifier file \"%s\":ret=%d\n",
-                       srp_verifier_file, ret);
+        if (!set_up_srp_verifier_file(ctx, &srp_callback_parm, srpuserseed,
+                                      srp_verifier_file))
             goto end;
-        }
-        SSL_CTX_set_verify(ctx, SSL_VERIFY_NONE, verify_callback);
-        SSL_CTX_set_srp_cb_arg(ctx, &srp_callback_parm);
-        SSL_CTX_set_srp_username_callback(ctx, ssl_srp_server_param_cb);
     } else
 #endif
     if (CAfile != NULL) {
@@ -2650,15 +2593,9 @@ static int sv_body(int s, int stype, int prot, unsigned char *context)
 #ifndef OPENSSL_NO_SRP
                 while (SSL_get_error(con, k) == SSL_ERROR_WANT_X509_LOOKUP) {
                     BIO_printf(bio_s_out, "LOOKUP renego during write\n");
-                    SRP_user_pwd_free(srp_callback_parm.user);
-                    srp_callback_parm.user =
-                        SRP_VBASE_get1_by_user(srp_callback_parm.vb,
-                                               srp_callback_parm.login);
-                    if (srp_callback_parm.user)
-                        BIO_printf(bio_s_out, "LOOKUP done %s\n",
-                                   srp_callback_parm.user->info);
-                    else
-                        BIO_printf(bio_s_out, "LOOKUP not successful\n");
+
+                    lookup_srp_user(&srp_callback_parm, bio_s_out);
+
                     k = SSL_write(con, &(buf[l]), (unsigned int)i);
                 }
 #endif
@@ -2725,15 +2662,9 @@ static int sv_body(int s, int stype, int prot, unsigned char *context)
 #ifndef OPENSSL_NO_SRP
                 while (SSL_get_error(con, i) == SSL_ERROR_WANT_X509_LOOKUP) {
                     BIO_printf(bio_s_out, "LOOKUP renego during read\n");
-                    SRP_user_pwd_free(srp_callback_parm.user);
-                    srp_callback_parm.user =
-                        SRP_VBASE_get1_by_user(srp_callback_parm.vb,
-                                               srp_callback_parm.login);
-                    if (srp_callback_parm.user)
-                        BIO_printf(bio_s_out, "LOOKUP done %s\n",
-                                   srp_callback_parm.user->info);
-                    else
-                        BIO_printf(bio_s_out, "LOOKUP not successful\n");
+
+                    lookup_srp_user(&srp_callback_parm, bio_s_out);
+
                     i = SSL_read(con, (char *)buf, bufsize);
                 }
 #endif
@@ -2875,15 +2806,9 @@ static int init_ssl_connection(SSL *con)
                    && SSL_get_error(con, i) == SSL_ERROR_WANT_X509_LOOKUP) {
                 BIO_printf(bio_s_out, "LOOKUP during accept %s\n",
                            srp_callback_parm.login);
-                SRP_user_pwd_free(srp_callback_parm.user);
-                srp_callback_parm.user =
-                    SRP_VBASE_get1_by_user(srp_callback_parm.vb,
-                                           srp_callback_parm.login);
-                if (srp_callback_parm.user)
-                    BIO_printf(bio_s_out, "LOOKUP done %s\n",
-                               srp_callback_parm.user->info);
-                else
-                    BIO_printf(bio_s_out, "LOOKUP not successful\n");
+
+                lookup_srp_user(&srp_callback_parm, bio_s_out);
+
                 i = SSL_accept(con);
                 if (i <= 0)
                     retry = is_retryable(con, i);
@@ -3099,15 +3024,9 @@ static int www_body(int s, int stype, int prot, unsigned char *context)
                 if (BIO_should_io_special(io)
                     && BIO_get_retry_reason(io) == BIO_RR_SSL_X509_LOOKUP) {
                     BIO_printf(bio_s_out, "LOOKUP renego during read\n");
-                    SRP_user_pwd_free(srp_callback_parm.user);
-                    srp_callback_parm.user =
-                        SRP_VBASE_get1_by_user(srp_callback_parm.vb,
-                                               srp_callback_parm.login);
-                    if (srp_callback_parm.user)
-                        BIO_printf(bio_s_out, "LOOKUP done %s\n",
-                                   srp_callback_parm.user->info);
-                    else
-                        BIO_printf(bio_s_out, "LOOKUP not successful\n");
+
+                    lookup_srp_user(&srp_callback_parm, bio_s_out);
+
                     continue;
                 }
 #endif
@@ -3511,15 +3430,9 @@ static int rev_body(int s, int stype, int prot, unsigned char *context)
         if (BIO_should_io_special(io)
             && BIO_get_retry_reason(io) == BIO_RR_SSL_X509_LOOKUP) {
             BIO_printf(bio_s_out, "LOOKUP renego during accept\n");
-            SRP_user_pwd_free(srp_callback_parm.user);
-            srp_callback_parm.user =
-                SRP_VBASE_get1_by_user(srp_callback_parm.vb,
-                                       srp_callback_parm.login);
-            if (srp_callback_parm.user)
-                BIO_printf(bio_s_out, "LOOKUP done %s\n",
-                           srp_callback_parm.user->info);
-            else
-                BIO_printf(bio_s_out, "LOOKUP not successful\n");
+
+            lookup_srp_user(&srp_callback_parm, bio_s_out);
+
             continue;
         }
 #endif
@@ -3540,15 +3453,9 @@ static int rev_body(int s, int stype, int prot, unsigned char *context)
                 if (BIO_should_io_special(io)
                     && BIO_get_retry_reason(io) == BIO_RR_SSL_X509_LOOKUP) {
                     BIO_printf(bio_s_out, "LOOKUP renego during read\n");
-                    SRP_user_pwd_free(srp_callback_parm.user);
-                    srp_callback_parm.user =
-                        SRP_VBASE_get1_by_user(srp_callback_parm.vb,
-                                               srp_callback_parm.login);
-                    if (srp_callback_parm.user)
-                        BIO_printf(bio_s_out, "LOOKUP done %s\n",
-                                   srp_callback_parm.user->info);
-                    else
-                        BIO_printf(bio_s_out, "LOOKUP not successful\n");
+
+                    lookup_srp_user(&srp_callback_parm, bio_s_out);
+
                     continue;
                 }
 #endif

@@ -1,11 +1,16 @@
 /*
- * Copyright 2015-2020 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2015-2021 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
  * in the file LICENSE in the source distribution or at
  * https://www.openssl.org/source/license.html
  */
+
+#if defined(__TANDEM) && defined(_SPT_MODEL_)
+# include <spthread.h>
+# include <spt_extensions.h> /* timeval */
+#endif
 
 #include "internal/cryptlib.h"
 #include <openssl/rand.h>
@@ -111,6 +116,18 @@ void ossl_statem_set_renegotiate(SSL *s)
     s->statem.request_state = TLS_ST_SW_HELLO_REQ;
 }
 
+void ossl_statem_send_fatal(SSL *s, int al)
+{
+    /* We shouldn't call SSLfatal() twice. Once is enough */
+    if (s->statem.in_init && s->statem.state == MSG_FLOW_ERROR)
+      return;
+    s->statem.in_init = 1;
+    s->statem.state = MSG_FLOW_ERROR;
+    if (al != SSL_AD_NO_ALERT
+            && s->statem.enc_write_state != ENC_WRITE_STATE_INVALID)
+        ssl3_send_alert(s, SSL3_AL_FATAL, al);
+}
+
 /*
  * Error reporting building block that's used instead of ERR_set_error().
  * In addition to what ERR_set_error() does, this puts the state machine
@@ -125,14 +142,7 @@ void ossl_statem_fatal(SSL *s, int al, int reason, const char *fmt, ...)
     ERR_vset_error(ERR_LIB_SSL, reason, fmt, args);
     va_end(args);
 
-    /* We shouldn't call SSLfatal() twice. Once is enough */
-    if (s->statem.in_init && s->statem.state == MSG_FLOW_ERROR)
-      return;
-    s->statem.in_init = 1;
-    s->statem.state = MSG_FLOW_ERROR;
-    if (al != SSL_AD_NO_ALERT
-            && s->statem.enc_write_state != ENC_WRITE_STATE_INVALID)
-        ssl3_send_alert(s, SSL3_AL_FATAL, al);
+    ossl_statem_send_fatal(s, al);
 }
 
 /*
@@ -572,7 +582,7 @@ static SUB_STATE_RETURN read_state_machine(SSL *s)
                 /*
                  * In DTLS we get the whole message in one go - header and body
                  */
-                ret = dtls_get_message(s, &mt, &len);
+                ret = dtls_get_message(s, &mt);
             } else {
                 ret = tls_get_message_header(s, &mt);
             }
@@ -615,13 +625,18 @@ static SUB_STATE_RETURN read_state_machine(SSL *s)
             /* Fall through */
 
         case READ_STATE_BODY:
-            if (!SSL_IS_DTLS(s)) {
-                /* We already got this above for DTLS */
+            if (SSL_IS_DTLS(s)) {
+                /*
+                 * Actually we already have the body, but we give DTLS the
+                 * opportunity to do any further processing.
+                 */
+                ret = dtls_get_message_body(s, &len);
+            } else {
                 ret = tls_get_message_body(s, &len);
-                if (ret == 0) {
-                    /* Could be non-blocking IO */
-                    return SUB_STATE_ERROR;
-                }
+            }
+            if (ret == 0) {
+                /* Could be non-blocking IO */
+                return SUB_STATE_ERROR;
             }
 
             s->first_packet = 0;

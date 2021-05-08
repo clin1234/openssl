@@ -1,5 +1,5 @@
 /*
- * Copyright 1995-2020 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 1995-2021 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -36,7 +36,8 @@ struct doall_dgst_digests {
 };
 
 typedef enum OPTION_choice {
-    OPT_ERR = -1, OPT_EOF = 0, OPT_HELP, OPT_LIST,
+    OPT_COMMON,
+    OPT_LIST,
     OPT_C, OPT_R, OPT_OUT, OPT_SIGN, OPT_PASSIN, OPT_VERIFY,
     OPT_PRVERIFY, OPT_SIGNATURE, OPT_KEYFORM, OPT_ENGINE, OPT_ENGINE_IMPL,
     OPT_HEX, OPT_BINARY, OPT_DEBUG, OPT_FIPS_FINGERPRINT,
@@ -97,23 +98,22 @@ int dgst_main(int argc, char **argv)
     EVP_PKEY *sigkey = NULL;
     STACK_OF(OPENSSL_STRING) *sigopts = NULL, *macopts = NULL;
     char *hmac_key = NULL;
-    char *mac_name = NULL;
+    char *mac_name = NULL, *digestname = NULL;
     char *passinarg = NULL, *passin = NULL;
-    const EVP_MD *md = NULL, *m;
+    EVP_MD *md = NULL;
     const char *outfile = NULL, *keyfile = NULL, *prog = NULL;
     const char *sigfile = NULL;
     const char *md_name = NULL;
     OPTION_CHOICE o;
-    int separator = 0, debug = 0, keyform = FORMAT_PEM, siglen = 0;
+    int separator = 0, debug = 0, keyform = FORMAT_UNDEF, siglen = 0;
     int i, ret = 1, out_bin = -1, want_pub = 0, do_verify = 0;
     int xoflen = 0;
     unsigned char *buf = NULL, *sigbuf = NULL;
     int engine_impl = 0;
     struct doall_dgst_digests dec;
 
-    prog = opt_progname(argv[0]);
     buf = app_malloc(BUFSIZE, "I/O buffer");
-    md = EVP_get_digestbyname(prog);
+    md = (EVP_MD *)EVP_get_digestbyname(argv[0]);
 
     prog = opt_init(argc, argv, dgst_options);
     while ((o = opt_next()) != OPT_EOF) {
@@ -210,9 +210,7 @@ int dgst_main(int argc, char **argv)
                 goto opthelp;
             break;
         case OPT_DIGEST:
-            if (!opt_md(opt_unknown(), &m))
-                goto opthelp;
-            md = m;
+            digestname = opt_unknown();
             break;
         case OPT_PROV_CASES:
             if (!opt_provider(o))
@@ -227,6 +225,13 @@ int dgst_main(int argc, char **argv)
     if (keyfile != NULL && argc > 1) {
         BIO_printf(bio_err, "%s: Can only sign or verify one file.\n", prog);
         goto end;
+    }
+    if (!app_RAND_load())
+        goto end;
+
+    if (digestname != NULL) {
+        if (!opt_md(digestname, &md))
+            goto opthelp;
     }
 
     if (do_verify && sigfile == NULL) {
@@ -371,7 +376,7 @@ int dgst_main(int argc, char **argv)
             goto end;
         }
         if (md == NULL)
-            md = EVP_sha256();
+            md = (EVP_MD *)EVP_sha256();
         if (!EVP_DigestInit_ex(mctx, md, impl)) {
             BIO_printf(bio_err, "Error setting digest\n");
             ERR_print_errors(bio_err);
@@ -400,8 +405,9 @@ int dgst_main(int argc, char **argv)
 
     if (md == NULL) {
         EVP_MD_CTX *tctx;
+
         BIO_get_md_ctx(bmd, &tctx);
-        md = EVP_MD_CTX_md(tctx);
+        md = EVP_MD_CTX_get1_md(tctx);
     }
     if (md != NULL)
         md_name = EVP_MD_name(md);
@@ -425,7 +431,7 @@ int dgst_main(int argc, char **argv)
         const char *sig_name = NULL;
         if (!out_bin) {
             if (sigkey != NULL)
-                sig_name = EVP_PKEY_get0_first_alg_name(sigkey);
+                sig_name = EVP_PKEY_get0_type_name(sigkey);
         }
         ret = 0;
         for (i = 0; i < argc; i++) {
@@ -448,6 +454,7 @@ int dgst_main(int argc, char **argv)
     BIO_free(in);
     OPENSSL_free(passin);
     BIO_free_all(out);
+    EVP_MD_free(md);
     EVP_PKEY_free(sigkey);
     sk_OPENSSL_STRING_free(sigopts);
     sk_OPENSSL_STRING_free(macopts);

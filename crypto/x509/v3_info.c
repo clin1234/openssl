@@ -1,5 +1,5 @@
 /*
- * Copyright 1999-2020 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 1999-2021 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -25,7 +25,7 @@ static AUTHORITY_INFO_ACCESS *v2i_AUTHORITY_INFO_ACCESS(X509V3_EXT_METHOD
                                                         STACK_OF(CONF_VALUE)
                                                         *nval);
 
-const X509V3_EXT_METHOD v3_info = { NID_info_access, X509V3_EXT_MULTILINE,
+const X509V3_EXT_METHOD ossl_v3_info = { NID_info_access, X509V3_EXT_MULTILINE,
     ASN1_ITEM_ref(AUTHORITY_INFO_ACCESS),
     0, 0, 0, 0,
     0, 0,
@@ -35,7 +35,7 @@ const X509V3_EXT_METHOD v3_info = { NID_info_access, X509V3_EXT_MULTILINE,
     NULL
 };
 
-const X509V3_EXT_METHOD v3_sinfo = { NID_sinfo_access, X509V3_EXT_MULTILINE,
+const X509V3_EXT_METHOD ossl_v3_sinfo = { NID_sinfo_access, X509V3_EXT_MULTILINE,
     ASN1_ITEM_ref(AUTHORITY_INFO_ACCESS),
     0, 0, 0, 0,
     0, 0,
@@ -108,7 +108,7 @@ static AUTHORITY_INFO_ACCESS *v2i_AUTHORITY_INFO_ACCESS(X509V3_EXT_METHOD
     ACCESS_DESCRIPTION *acc;
     int i;
     const int num = sk_CONF_VALUE_num(nval);
-    char *ptmp;
+    char *objtmp, *ptmp;
 
     if ((ainfo = sk_ACCESS_DESCRIPTION_new_reserve(NULL, num)) == NULL) {
         ERR_raise(ERR_LIB_X509V3, ERR_R_MALLOC_FAILURE);
@@ -130,12 +130,18 @@ static AUTHORITY_INFO_ACCESS *v2i_AUTHORITY_INFO_ACCESS(X509V3_EXT_METHOD
         ctmp.value = cnf->value;
         if (!v2i_GENERAL_NAME_ex(acc->location, method, ctx, &ctmp, 0))
             goto err;
-        acc->method = OBJ_txt2obj(cnf->value, 0);
-        if (!acc->method) {
-            ERR_raise_data(ERR_LIB_X509V3, X509V3_R_BAD_OBJECT,
-                           "value=%s", cnf->value);
+        if ((objtmp = OPENSSL_strndup(cnf->name, ptmp - cnf->name)) == NULL) {
+            ERR_raise(ERR_LIB_X509V3, ERR_R_MALLOC_FAILURE);
             goto err;
         }
+        acc->method = OBJ_txt2obj(objtmp, 0);
+        if (!acc->method) {
+            ERR_raise_data(ERR_LIB_X509V3, X509V3_R_BAD_OBJECT,
+                           "value=%s", objtmp);
+            OPENSSL_free(objtmp);
+            goto err;
+        }
+        OPENSSL_free(objtmp);
     }
     return ainfo;
  err:

@@ -1,5 +1,5 @@
 /*
- * Copyright 2016-2020 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2016-2021 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -479,6 +479,7 @@ static OSSL_STORE_INFO *try_decode_PKCS8Encrypted(const char *pem_name,
     mem->data = (char *)new_data;
     mem->max = mem->length = (size_t)new_data_len;
     X509_SIG_free(p8);
+    p8 = NULL;
 
     store_info = new_EMBEDDED(PEM_STRING_PKCS8INF, mem);
     if (store_info == NULL) {
@@ -1155,7 +1156,8 @@ static int file_find(OSSL_STORE_LOADER_CTX *ctx,
             return 0;
         }
 
-        hash = X509_NAME_hash(OSSL_STORE_SEARCH_get0_name(search));
+        hash = X509_NAME_hash_ex(OSSL_STORE_SEARCH_get0_name(search),
+                                 NULL, NULL, NULL);
         BIO_snprintf(ctx->_.dir.search_name, sizeof(ctx->_.dir.search_name),
                      "%08lx", hash);
         return 1;

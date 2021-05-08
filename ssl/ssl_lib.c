@@ -1,5 +1,5 @@
 /*
- * Copyright 1995-2020 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 1995-2021 The OpenSSL Project Authors. All Rights Reserved.
  * Copyright (c) 2002, Oracle and/or its affiliates. All rights reserved
  * Copyright 2005 Nokia. All rights reserved.
  *
@@ -269,7 +269,7 @@ static const EVP_MD *tlsa_md_get(SSL_DANE *dane, uint8_t mtype)
 static int dane_tlsa_add(SSL_DANE *dane,
                          uint8_t usage,
                          uint8_t selector,
-                         uint8_t mtype, unsigned const char *data, size_t dlen)
+                         uint8_t mtype, const unsigned char *data, size_t dlen)
 {
     danetls_record *t;
     const EVP_MD *md = NULL;
@@ -768,24 +768,26 @@ SSL *SSL_new(SSL_CTX *ctx)
     s->ext.ocsp.resp_len = 0;
     SSL_CTX_up_ref(ctx);
     s->session_ctx = ctx;
-#ifndef OPENSSL_NO_EC
     if (ctx->ext.ecpointformats) {
         s->ext.ecpointformats =
             OPENSSL_memdup(ctx->ext.ecpointformats,
                            ctx->ext.ecpointformats_len);
-        if (!s->ext.ecpointformats)
+        if (!s->ext.ecpointformats) {
+            s->ext.ecpointformats_len = 0;
             goto err;
+        }
         s->ext.ecpointformats_len =
             ctx->ext.ecpointformats_len;
     }
-#endif
     if (ctx->ext.supportedgroups) {
         s->ext.supportedgroups =
             OPENSSL_memdup(ctx->ext.supportedgroups,
                            ctx->ext.supportedgroups_len
                                 * sizeof(*ctx->ext.supportedgroups));
-        if (!s->ext.supportedgroups)
+        if (!s->ext.supportedgroups) {
+            s->ext.supportedgroups_len = 0;
             goto err;
+        }
         s->ext.supportedgroups_len = ctx->ext.supportedgroups_len;
     }
 
@@ -795,8 +797,10 @@ SSL *SSL_new(SSL_CTX *ctx)
 
     if (s->ctx->ext.alpn) {
         s->ext.alpn = OPENSSL_malloc(s->ctx->ext.alpn_len);
-        if (s->ext.alpn == NULL)
+        if (s->ext.alpn == NULL) {
+            s->ext.alpn_len = 0;
             goto err;
+        }
         memcpy(s->ext.alpn, s->ctx->ext.alpn, s->ctx->ext.alpn_len);
         s->ext.alpn_len = s->ctx->ext.alpn_len;
     }
@@ -895,7 +899,8 @@ int SSL_set_session_id_context(SSL *ssl, const unsigned char *sid_ctx,
 
 int SSL_CTX_set_generate_session_id(SSL_CTX *ctx, GEN_SESSION_CB cb)
 {
-    CRYPTO_THREAD_write_lock(ctx->lock);
+    if (!CRYPTO_THREAD_write_lock(ctx->lock))
+        return 0;
     ctx->generate_session_id = cb;
     CRYPTO_THREAD_unlock(ctx->lock);
     return 1;
@@ -903,7 +908,8 @@ int SSL_CTX_set_generate_session_id(SSL_CTX *ctx, GEN_SESSION_CB cb)
 
 int SSL_set_generate_session_id(SSL *ssl, GEN_SESSION_CB cb)
 {
-    CRYPTO_THREAD_write_lock(ssl->lock);
+    if (!CRYPTO_THREAD_write_lock(ssl->lock))
+        return 0;
     ssl->generate_session_id = cb;
     CRYPTO_THREAD_unlock(ssl->lock);
     return 1;
@@ -928,7 +934,8 @@ int SSL_has_matching_session_id(const SSL *ssl, const unsigned char *id,
     r.session_id_length = id_len;
     memcpy(r.session_id, id, id_len);
 
-    CRYPTO_THREAD_read_lock(ssl->session_ctx->lock);
+    if (!CRYPTO_THREAD_read_lock(ssl->session_ctx->lock))
+        return 0;
     p = lh_SSL_SESSION_retrieve(ssl->session_ctx->sessions, &r);
     CRYPTO_THREAD_unlock(ssl->session_ctx->lock);
     return (p != NULL);
@@ -1099,7 +1106,7 @@ int SSL_get0_dane_authority(SSL *s, X509 **mcert, EVP_PKEY **mspki)
 }
 
 int SSL_get0_dane_tlsa(SSL *s, uint8_t *usage, uint8_t *selector,
-                       uint8_t *mtype, unsigned const char **data, size_t *dlen)
+                       uint8_t *mtype, const unsigned char **data, size_t *dlen)
 {
     SSL_DANE *dane = &s->dane;
 
@@ -1126,7 +1133,7 @@ SSL_DANE *SSL_get0_dane(SSL *s)
 }
 
 int SSL_dane_tlsa_add(SSL *s, uint8_t usage, uint8_t selector,
-                      uint8_t mtype, unsigned const char *data, size_t dlen)
+                      uint8_t mtype, const unsigned char *data, size_t dlen)
 {
     return dane_tlsa_add(&s->dane, usage, selector, mtype, data, dlen);
 }
@@ -1212,10 +1219,8 @@ void SSL_free(SSL *s)
 
     OPENSSL_free(s->ext.hostname);
     SSL_CTX_free(s->session_ctx);
-#ifndef OPENSSL_NO_EC
     OPENSSL_free(s->ext.ecpointformats);
     OPENSSL_free(s->ext.peer_ecpointformats);
-#endif                          /* OPENSSL_NO_EC */
     OPENSSL_free(s->ext.supportedgroups);
     OPENSSL_free(s->ext.peer_supportedgroups);
     sk_X509_EXTENSION_pop_free(s->ext.ocsp.exts, X509_EXTENSION_free);
@@ -1599,7 +1604,7 @@ STACK_OF(X509) *SSL_get_peer_cert_chain(const SSL *s)
 int SSL_copy_session_id(SSL *t, const SSL *f)
 {
     int i;
-    /* Do we need to to SSL locking? */
+    /* Do we need to do SSL locking? */
     if (!SSL_set_session(t, SSL_get_session(f))) {
         return 0;
     }
@@ -2980,6 +2985,19 @@ void SSL_CTX_set_npn_select_cb(SSL_CTX *ctx,
 }
 #endif
 
+static int alpn_value_ok(const unsigned char *protos, unsigned int protos_len)
+{
+    unsigned int idx;
+
+    if (protos_len < 2 || protos == NULL)
+        return 0;
+
+    for (idx = 0; idx < protos_len; idx += protos[idx] + 1) {
+        if (protos[idx] == 0)
+            return 0;
+    }
+    return idx == protos_len;
+}
 /*
  * SSL_CTX_set_alpn_protos sets the ALPN protocol list on |ctx| to |protos|.
  * |protos| must be in wire-format (i.e. a series of non-empty, 8-bit
@@ -2988,12 +3006,25 @@ void SSL_CTX_set_npn_select_cb(SSL_CTX *ctx,
 int SSL_CTX_set_alpn_protos(SSL_CTX *ctx, const unsigned char *protos,
                             unsigned int protos_len)
 {
-    OPENSSL_free(ctx->ext.alpn);
-    ctx->ext.alpn = OPENSSL_memdup(protos, protos_len);
-    if (ctx->ext.alpn == NULL) {
+    unsigned char *alpn;
+
+    if (protos_len == 0 || protos == NULL) {
+        OPENSSL_free(ctx->ext.alpn);
+        ctx->ext.alpn = NULL;
+        ctx->ext.alpn_len = 0;
+        return 0;
+    }
+    /* Not valid per RFC */
+    if (!alpn_value_ok(protos, protos_len))
+        return 1;
+
+    alpn = OPENSSL_memdup(protos, protos_len);
+    if (alpn == NULL) {
         ERR_raise(ERR_LIB_SSL, ERR_R_MALLOC_FAILURE);
         return 1;
     }
+    OPENSSL_free(ctx->ext.alpn);
+    ctx->ext.alpn = alpn;
     ctx->ext.alpn_len = protos_len;
 
     return 0;
@@ -3007,12 +3038,25 @@ int SSL_CTX_set_alpn_protos(SSL_CTX *ctx, const unsigned char *protos,
 int SSL_set_alpn_protos(SSL *ssl, const unsigned char *protos,
                         unsigned int protos_len)
 {
-    OPENSSL_free(ssl->ext.alpn);
-    ssl->ext.alpn = OPENSSL_memdup(protos, protos_len);
-    if (ssl->ext.alpn == NULL) {
+    unsigned char *alpn;
+
+    if (protos_len == 0 || protos == NULL) {
+        OPENSSL_free(ssl->ext.alpn);
+        ssl->ext.alpn = NULL;
+        ssl->ext.alpn_len = 0;
+        return 0;
+    }
+    /* Not valid per RFC */
+    if (!alpn_value_ok(protos, protos_len))
+        return 1;
+
+    alpn = OPENSSL_memdup(protos, protos_len);
+    if (alpn == NULL) {
         ERR_raise(ERR_LIB_SSL, ERR_R_MALLOC_FAILURE);
         return 1;
     }
+    OPENSSL_free(ssl->ext.alpn);
+    ssl->ext.alpn = alpn;
     ssl->ext.alpn_len = protos_len;
 
     return 0;
@@ -3137,6 +3181,15 @@ SSL_CTX *SSL_CTX_new_ex(OSSL_LIB_CTX *libctx, const char *propq,
     if (ret == NULL)
         goto err;
 
+    /* Init the reference counting before any call to SSL_CTX_free */
+    ret->references = 1;
+    ret->lock = CRYPTO_THREAD_lock_new();
+    if (ret->lock == NULL) {
+        ERR_raise(ERR_LIB_SSL, ERR_R_MALLOC_FAILURE);
+        OPENSSL_free(ret);
+        return NULL;
+    }
+
     ret->libctx = libctx;
     if (propq != NULL) {
         ret->propq = OPENSSL_strdup(propq);
@@ -3152,13 +3205,6 @@ SSL_CTX *SSL_CTX_new_ex(OSSL_LIB_CTX *libctx, const char *propq,
     ret->session_cache_size = SSL_SESSION_CACHE_MAX_SIZE_DEFAULT;
     /* We take the system default. */
     ret->session_timeout = meth->get_timeout();
-    ret->references = 1;
-    ret->lock = CRYPTO_THREAD_lock_new();
-    if (ret->lock == NULL) {
-        ERR_raise(ERR_LIB_SSL, ERR_R_MALLOC_FAILURE);
-        OPENSSL_free(ret);
-        return NULL;
-    }
     ret->max_cert_list = SSL_MAX_CERT_LIST_DEFAULT;
     ret->verify_mode = SSL_VERIFY_NONE;
     if ((ret->cert = ssl_cert_new()) == NULL)
@@ -3243,7 +3289,7 @@ SSL_CTX *SSL_CTX_new_ex(OSSL_LIB_CTX *libctx, const char *propq,
         goto err;
 
 #ifndef OPENSSL_NO_SRP
-    if (!SSL_CTX_SRP_CTX_init(ret))
+    if (!ssl_ctx_srp_ctx_init_intern(ret))
         goto err;
 #endif
 #ifndef OPENSSL_NO_ENGINE
@@ -3264,11 +3310,6 @@ SSL_CTX *SSL_CTX_new_ex(OSSL_LIB_CTX *libctx, const char *propq,
     }
 # endif
 #endif
-    /*
-     * Default is to connect to non-RI servers. When RI is more widely
-     * deployed might change this.
-     */
-    ret->options |= SSL_OP_LEGACY_SERVER_CONNECT;
     /*
      * Disable compression by default to prevent CRIME. Applications can
      * re-enable compression by configuring
@@ -3386,16 +3427,15 @@ void SSL_CTX_free(SSL_CTX *a)
     sk_SRTP_PROTECTION_PROFILE_free(a->srtp_profiles);
 #endif
 #ifndef OPENSSL_NO_SRP
-    SSL_CTX_SRP_CTX_free(a);
+    ssl_ctx_srp_ctx_free_intern(a);
 #endif
 #ifndef OPENSSL_NO_ENGINE
     tls_engine_finish(a->client_cert_engine);
 #endif
 
-#ifndef OPENSSL_NO_EC
     OPENSSL_free(a->ext.ecpointformats);
-#endif
     OPENSSL_free(a->ext.supportedgroups);
+    OPENSSL_free(a->ext.supported_groups_default);
     OPENSSL_free(a->ext.alpn);
     OPENSSL_secure_free(a->ext.secure);
 
@@ -3498,24 +3538,19 @@ void ssl_set_masks(SSL *s)
     uint32_t *pvalid = s->s3.tmp.valid_flags;
     int rsa_enc, rsa_sign, dh_tmp, dsa_sign;
     unsigned long mask_k, mask_a;
-#ifndef OPENSSL_NO_EC
     int have_ecc_cert, ecdsa_ok;
-#endif
+
     if (c == NULL)
         return;
 
     dh_tmp = (c->dh_tmp != NULL
-#ifndef OPENSSL_NO_DH
               || c->dh_tmp_cb != NULL
-#endif
               || c->dh_tmp_auto);
 
     rsa_enc = pvalid[SSL_PKEY_RSA] & CERT_PKEY_VALID;
     rsa_sign = pvalid[SSL_PKEY_RSA] & CERT_PKEY_VALID;
     dsa_sign = pvalid[SSL_PKEY_DSA_SIGN] & CERT_PKEY_VALID;
-#ifndef OPENSSL_NO_EC
     have_ecc_cert = pvalid[SSL_PKEY_ECC] & CERT_PKEY_VALID;
-#endif
     mask_k = 0;
     mask_a = 0;
 
@@ -3563,7 +3598,6 @@ void ssl_set_masks(SSL *s)
      * An ECC certificate may be usable for ECDH and/or ECDSA cipher suites
      * depending on the key usage extension.
      */
-#ifndef OPENSSL_NO_EC
     if (have_ecc_cert) {
         uint32_t ex_kusage;
         ex_kusage = X509_get_key_usage(c->pkeys[SSL_PKEY_ECC].x509);
@@ -3584,11 +3618,8 @@ void ssl_set_masks(SSL *s)
             && pvalid[SSL_PKEY_ED448] & CERT_PKEY_EXPLICIT_SIGN
             && TLS1_get_version(s) == TLS1_2_VERSION)
             mask_a |= SSL_aECDSA;
-#endif
 
-#ifndef OPENSSL_NO_EC
     mask_k |= SSL_kECDHE;
-#endif
 
 #ifndef OPENSSL_NO_PSK
     mask_k |= SSL_kPSK;
@@ -3605,8 +3636,6 @@ void ssl_set_masks(SSL *s)
     s->s3.tmp.mask_a = mask_a;
 }
 
-#ifndef OPENSSL_NO_EC
-
 int ssl_check_srvr_ecc_cert_and_alg(X509 *x, SSL *s)
 {
     if (s->s3.tmp.new_cipher->algorithm_auth & SSL_aECDSA) {
@@ -3618,8 +3647,6 @@ int ssl_check_srvr_ecc_cert_and_alg(X509 *x, SSL *s)
     }
     return 1;                   /* all checks are ok */
 }
-
-#endif
 
 int ssl_get_server_cert_serverinfo(SSL *s, const unsigned char **serverinfo,
                                    size_t *serverinfo_length)
@@ -3808,6 +3835,8 @@ int SSL_get_error(const SSL *s, int i)
     }
     if (SSL_want_x509_lookup(s))
         return SSL_ERROR_WANT_X509_LOOKUP;
+    if (SSL_want_retry_verify(s))
+        return SSL_ERROR_WANT_RETRY_VERIFY;
     if (SSL_want_async(s))
         return SSL_ERROR_WANT_ASYNC;
     if (SSL_want_async_job(s))
@@ -4311,7 +4340,7 @@ int SSL_CTX_set_default_verify_file(SSL_CTX *ctx)
     if (lookup == NULL)
         return 0;
 
-    /* We ignore errors, in case the directory doesn't exist */
+    /* We ignore errors, in case the file doesn't exist */
     ERR_set_mark();
 
     X509_LOOKUP_load_file_ex(lookup, NULL, X509_FILETYPE_DEFAULT, ctx->libctx,
@@ -4480,27 +4509,6 @@ int SSL_want(const SSL *s)
 {
     return s->rwstate;
 }
-
-/**
- * \brief Set the callback for generating temporary DH keys.
- * \param ctx the SSL context.
- * \param dh the callback
- */
-
-#if !defined(OPENSSL_NO_DH) && !defined(OPENSSL_NO_DEPRECATED_3_0)
-void SSL_CTX_set_tmp_dh_callback(SSL_CTX *ctx,
-                                 DH *(*dh) (SSL *ssl, int is_export,
-                                            int keylength))
-{
-    SSL_CTX_callback_ctrl(ctx, SSL_CTRL_SET_TMP_DH_CB, (void (*)(void))dh);
-}
-
-void SSL_set_tmp_dh_callback(SSL *ssl, DH *(*dh) (SSL *ssl, int is_export,
-                                                  int keylength))
-{
-    SSL_callback_ctrl(ssl, SSL_CTRL_SET_TMP_DH_CB, (void (*)(void))dh);
-}
-#endif
 
 #ifndef OPENSSL_NO_PSK
 int SSL_CTX_use_psk_identity_hint(SSL_CTX *ctx, const char *identity_hint)

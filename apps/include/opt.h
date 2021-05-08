@@ -1,5 +1,5 @@
 /*
- * Copyright 2018-2020 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2018-2021 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -13,6 +13,8 @@
 #include <openssl/e_os2.h>
 #include <openssl/types.h>
 #include <stdarg.h>
+
+#define OPT_COMMON OPT_ERR = -1, OPT_EOF = 0, OPT_HELP
 
 /*
  * Common verification options.
@@ -258,7 +260,7 @@
 
 # define OPT_R_OPTIONS \
     OPT_SECTION("Random state"), \
-    {"rand", OPT_R_RAND, 's', "Load the file(s) into the random number generator"}, \
+    {"rand", OPT_R_RAND, 's', "Load the given file(s) into the random number generator"}, \
     {"writerand", OPT_R_WRITERAND, '>', "Write random data to the specified file"}
 
 # define OPT_R_CASES \
@@ -270,7 +272,7 @@
  */
 # define OPT_PROV_ENUM \
         OPT_PROV__FIRST=1600, \
-        OPT_PROV_PROVIDER, OPT_PROV_PROVIDER_PATH, \
+        OPT_PROV_PROVIDER, OPT_PROV_PROVIDER_PATH, OPT_PROV_PROPQUERY, \
         OPT_PROV__LAST
 
 # define OPT_CONFIG_OPTION \
@@ -279,12 +281,14 @@
 # define OPT_PROV_OPTIONS \
         OPT_SECTION("Provider"), \
         { "provider-path", OPT_PROV_PROVIDER_PATH, 's', "Provider load path (must be before 'provider' argument if required)" }, \
-        { "provider", OPT_PROV_PROVIDER, 's', "Provider to load (can be specified multiple times)" }
+        { "provider", OPT_PROV_PROVIDER, 's', "Provider to load (can be specified multiple times)" }, \
+        { "propquery", OPT_PROV_PROPQUERY, 's', "Property query used when fetching algorithms" }
 
 # define OPT_PROV_CASES \
         OPT_PROV__FIRST: case OPT_PROV__LAST: break; \
         case OPT_PROV_PROVIDER: \
-        case OPT_PROV_PROVIDER_PATH
+        case OPT_PROV_PROVIDER_PATH: \
+        case OPT_PROV_PROPQUERY
 
 /*
  * Option parsing.
@@ -340,43 +344,50 @@ typedef struct string_int_pair_st {
 #define OPT_PARAMETERS() { OPT_PARAM_STR, 1, '-', "Parameters:\n" }
 
 const char *opt_path_end(const char *filename);
-char *opt_progname(const char *argv0);
-char *opt_getprog(void);
 char *opt_init(int ac, char **av, const OPTIONS * o);
-int opt_next(void);
+char *opt_progname(const char *argv0);
+char *opt_appname(const char *argv0);
+char *opt_getprog(void);
+void opt_help(const OPTIONS * list);
+
 void opt_begin(void);
-int opt_format(const char *s, unsigned long flags, int *result);
-const char *format2str(int format);
+int opt_next(void);
+char *opt_flag(void);
+char *opt_arg(void);
+char *opt_unknown(void);
+int opt_cipher(const char *name, EVP_CIPHER **cipherp);
+int opt_cipher_silent(const char *name, EVP_CIPHER **cipherp);
+int opt_md(const char *name, EVP_MD **mdp);
+int opt_md_silent(const char *name, EVP_MD **mdp);
+
 int opt_int(const char *arg, int *result);
-int opt_ulong(const char *arg, unsigned long *result);
+int opt_int_arg(void);
 int opt_long(const char *arg, long *result);
+int opt_ulong(const char *arg, unsigned long *result);
 #if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 199901L && \
     defined(INTMAX_MAX) && defined(UINTMAX_MAX) && \
     !defined(OPENSSL_NO_INTTYPES_H)
-int opt_imax(const char *arg, intmax_t *result);
-int opt_umax(const char *arg, uintmax_t *result);
+int opt_intmax(const char *arg, intmax_t *result);
+int opt_uintmax(const char *arg, uintmax_t *result);
 #else
-# define opt_imax opt_long
-# define opt_umax opt_ulong
+# define opt_intmax opt_long
+# define opt_uintmax opt_ulong
 # define intmax_t long
 # define uintmax_t unsigned long
 #endif
+
+int opt_isdir(const char *name);
+int opt_format(const char *s, unsigned long flags, int *result);
+void print_format_error(int format, unsigned long flags);
+int opt_printf_stderr(const char *fmt, ...);
+int opt_string(const char *name, const char **options);
 int opt_pair(const char *arg, const OPT_PAIR * pairs, int *result);
-int opt_cipher(const char *name, const EVP_CIPHER **cipherp);
-int opt_md(const char *name, const EVP_MD **mdp);
-char *opt_arg(void);
-char *opt_flag(void);
-char *opt_unknown(void);
-char **opt_rest(void);
-int opt_num_rest(void);
+
 int opt_verify(int i, X509_VERIFY_PARAM *vpm);
 int opt_rand(int i);
 int opt_provider(int i);
-void opt_help(const OPTIONS * list);
-void opt_print(const OPTIONS * opt, int doingparams, int width);
-int opt_format_error(const char *s, unsigned long flags);
-void print_format_error(int format, unsigned long flags);
-int opt_isdir(const char *name);
-int opt_printf_stderr(const char *fmt, ...);
+
+char **opt_rest(void);
+int opt_num_rest(void);
 
 #endif /* OSSL_APPS_OPT_H */

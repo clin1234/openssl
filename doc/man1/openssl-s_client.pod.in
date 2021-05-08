@@ -83,6 +83,7 @@ B<openssl> B<s_client>
 [B<-comp>]
 [B<-no_comp>]
 [B<-brief>]
+[B<-legacy_server_connect>]
 [B<-allow_no_dhe_kex>]
 [B<-sigalgs> I<sigalglist>]
 [B<-curves> I<curvelist>]
@@ -231,7 +232,7 @@ This option cannot be used in conjunction with B<-noservername>.
 
 Suppresses sending of the SNI (Server Name Indication) extension in the
 ClientHello message. Cannot be used in conjunction with the B<-servername> or
-<-dane_tlsa_domain> options.
+B<-dane_tlsa_domain> options.
 
 =item B<-cert> I<filename>
 
@@ -242,8 +243,8 @@ The chain for the client certificate may be specified using B<-cert_chain>.
 
 =item B<-certform> B<DER>|B<PEM>|B<P12>
 
-The client certificate file format to use; the default is B<PEM>.
-This option has no effect and is retained for backward compatibility only.
+The client certificate file format to use; unspecified by default.
+See L<openssl-format-options(1)> for details.
 
 =item B<-cert_chain>
 
@@ -262,7 +263,7 @@ CRL file to use to check the server's certificate.
 
 =item B<-CRLform> B<DER>|B<PEM>
 
-The CRL file format; the default is B<PEM>.
+The CRL file format; unspecified by default.
 See L<openssl-format-options(1)> for details.
 
 =item B<-crl_download>
@@ -276,8 +277,7 @@ If not specified then the certificate file will be used to read also the key.
 
 =item B<-keyform> B<DER>|B<PEM>|B<P12>|B<ENGINE>
 
-The key format; the default is B<PEM>.
-The only value with effect is B<ENGINE>; all others have become obsolete.
+The key format; unspecified by default.
 See L<openssl-format-options(1)> for details.
 
 =item B<-pass> I<arg>
@@ -752,23 +752,24 @@ Offer SRTP key management, where B<value> is a colon-separated profile list.
 
 =item B<-srpuser> I<value>
 
-Set the SRP username to the specified value.
+Set the SRP username to the specified value. This option is deprecated.
 
 =item B<-srppass> I<value>
 
-Set the SRP password to the specified value.
+Set the SRP password to the specified value. This option is deprecated.
 
 =item B<-srp_lateuser>
 
-SRP username for the second ClientHello message.
+SRP username for the second ClientHello message. This option is deprecated.
 
-=item B<-srp_moregroups>
+=item B<-srp_moregroups>  This option is deprecated.
 
 Tolerate other than the known B<g> and B<N> values.
 
 =item B<-srp_strength> I<number>
 
-Set the minimal acceptable length, in bits, for B<N>.
+Set the minimal acceptable length, in bits, for B<N>.  This option is
+deprecated.
 
 {- $OpenSSL::safe::opt_version_item -}
 
@@ -910,14 +911,11 @@ The B<-name> option was added in OpenSSL 1.1.1.
 
 The B<-certform> option has become obsolete in OpenSSL 3.0.0 and has no effect.
 
-All B<-keyform> values except B<ENGINE> have become obsolete in OpenSSL 3.0.0
-and have no effect.
-
 The B<-engine> option was deprecated in OpenSSL 3.0.
 
 =head1 COPYRIGHT
 
-Copyright 2000-2020 The OpenSSL Project Authors. All Rights Reserved.
+Copyright 2000-2021 The OpenSSL Project Authors. All Rights Reserved.
 
 Licensed under the Apache License 2.0 (the "License").  You may not use
 this file except in compliance with the License.  You can obtain a copy

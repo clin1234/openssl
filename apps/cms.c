@@ -1,5 +1,5 @@
 /*
- * Copyright 2008-2020 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2008-2021 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -14,43 +14,41 @@
 #include "apps.h"
 #include "progs.h"
 
-#ifndef OPENSSL_NO_CMS
-
-# include <openssl/crypto.h>
-# include <openssl/pem.h>
-# include <openssl/err.h>
-# include <openssl/x509_vfy.h>
-# include <openssl/x509v3.h>
-# include <openssl/cms.h>
+#include <openssl/crypto.h>
+#include <openssl/pem.h>
+#include <openssl/err.h>
+#include <openssl/x509_vfy.h>
+#include <openssl/x509v3.h>
+#include <openssl/cms.h>
 
 static int save_certs(char *signerfile, STACK_OF(X509) *signers);
 static int cms_cb(int ok, X509_STORE_CTX *ctx);
 static void receipt_request_print(CMS_ContentInfo *cms);
 static CMS_ReceiptRequest *make_receipt_request(
     STACK_OF(OPENSSL_STRING) *rr_to, int rr_allorfirst,
-    STACK_OF(OPENSSL_STRING) *rr_from, OSSL_LIB_CTX *libctx, const char *propq);
+    STACK_OF(OPENSSL_STRING) *rr_from, OSSL_LIB_CTX *libctx);
 static int cms_set_pkey_param(EVP_PKEY_CTX *pctx,
                               STACK_OF(OPENSSL_STRING) *param);
 
-# define SMIME_OP        0x10
-# define SMIME_IP        0x20
-# define SMIME_SIGNERS   0x40
-# define SMIME_ENCRYPT           (1 | SMIME_OP)
-# define SMIME_DECRYPT           (2 | SMIME_IP)
-# define SMIME_SIGN              (3 | SMIME_OP | SMIME_SIGNERS)
-# define SMIME_VERIFY            (4 | SMIME_IP)
-# define SMIME_CMSOUT            (5 | SMIME_IP | SMIME_OP)
-# define SMIME_RESIGN            (6 | SMIME_IP | SMIME_OP | SMIME_SIGNERS)
-# define SMIME_DATAOUT           (7 | SMIME_IP)
-# define SMIME_DATA_CREATE       (8 | SMIME_OP)
-# define SMIME_DIGEST_VERIFY     (9 | SMIME_IP)
-# define SMIME_DIGEST_CREATE     (10 | SMIME_OP)
-# define SMIME_UNCOMPRESS        (11 | SMIME_IP)
-# define SMIME_COMPRESS          (12 | SMIME_OP)
-# define SMIME_ENCRYPTED_DECRYPT (13 | SMIME_IP)
-# define SMIME_ENCRYPTED_ENCRYPT (14 | SMIME_OP)
-# define SMIME_SIGN_RECEIPT      (15 | SMIME_IP | SMIME_OP)
-# define SMIME_VERIFY_RECEIPT    (16 | SMIME_IP)
+#define SMIME_OP        0x10
+#define SMIME_IP        0x20
+#define SMIME_SIGNERS   0x40
+#define SMIME_ENCRYPT           (1 | SMIME_OP)
+#define SMIME_DECRYPT           (2 | SMIME_IP)
+#define SMIME_SIGN              (3 | SMIME_OP | SMIME_SIGNERS)
+#define SMIME_VERIFY            (4 | SMIME_IP)
+#define SMIME_CMSOUT            (5 | SMIME_IP | SMIME_OP)
+#define SMIME_RESIGN            (6 | SMIME_IP | SMIME_OP | SMIME_SIGNERS)
+#define SMIME_DATAOUT           (7 | SMIME_IP)
+#define SMIME_DATA_CREATE       (8 | SMIME_OP)
+#define SMIME_DIGEST_VERIFY     (9 | SMIME_IP)
+#define SMIME_DIGEST_CREATE     (10 | SMIME_OP)
+#define SMIME_UNCOMPRESS        (11 | SMIME_IP)
+#define SMIME_COMPRESS          (12 | SMIME_OP)
+#define SMIME_ENCRYPTED_DECRYPT (13 | SMIME_IP)
+#define SMIME_ENCRYPTED_ENCRYPT (14 | SMIME_OP)
+#define SMIME_SIGN_RECEIPT      (15 | SMIME_IP | SMIME_OP)
+#define SMIME_VERIFY_RECEIPT    (16 | SMIME_IP)
 
 static int verify_err = 0;
 
@@ -63,7 +61,7 @@ struct cms_key_param_st {
 };
 
 typedef enum OPTION_choice {
-    OPT_ERR = -1, OPT_EOF = 0, OPT_HELP,
+    OPT_COMMON,
     OPT_INFORM, OPT_OUTFORM, OPT_IN, OPT_OUT, OPT_ENCRYPT,
     OPT_DECRYPT, OPT_SIGN, OPT_CADES, OPT_SIGN_RECEIPT, OPT_RESIGN,
     OPT_VERIFY, OPT_VERIFY_RETCODE, OPT_VERIFY_RECEIPT,
@@ -126,7 +124,7 @@ const OPTIONS cms_options[] = {
     {"sign", OPT_SIGN, '-', "Sign message"},
     {"sign_receipt", OPT_SIGN_RECEIPT, '-', "Generate a signed receipt for the message"},
     {"resign", OPT_RESIGN, '-', "Resign a signed message"},
-    {"cades", OPT_CADES, '-', "Include signer certificate digest"},
+    {"cades", OPT_CADES, '-', "Include or check signingCertificate (CAdES-BES)"},
     {"verify", OPT_VERIFY, '-', "Verify signed message"},
     {"verify_retcode", OPT_VERIFY_RETCODE, '-',
         "Exit non-zero on verification failure"},
@@ -217,9 +215,7 @@ const OPTIONS cms_options[] = {
     {"aes128-wrap", OPT_AES128_WRAP, '-', "Use AES128 to wrap key"},
     {"aes192-wrap", OPT_AES192_WRAP, '-', "Use AES192 to wrap key"},
     {"aes256-wrap", OPT_AES256_WRAP, '-', "Use AES256 to wrap key"},
-# ifndef OPENSSL_NO_DES
     {"des3-wrap", OPT_3DES_WRAP, '-', "Use 3DES-EDE to wrap key"},
-# endif
     {"wrap", OPT_WRAP, 's', "Any wrap cipher to wrap key"},
 
     OPT_R_OPTIONS,
@@ -276,8 +272,8 @@ int cms_main(int argc, char **argv)
     CMS_ReceiptRequest *rr = NULL;
     ENGINE *e = NULL;
     EVP_PKEY *key = NULL;
-    const EVP_CIPHER *cipher = NULL, *wrap_cipher = NULL;
-    const EVP_MD *sign_md = NULL;
+    EVP_CIPHER *cipher = NULL, *wrap_cipher = NULL;
+    EVP_MD *sign_md = NULL;
     STACK_OF(OPENSSL_STRING) *rr_to = NULL, *rr_from = NULL;
     STACK_OF(OPENSSL_STRING) *sksigners = NULL, *skkeys = NULL;
     STACK_OF(X509) *encerts = NULL, *other = NULL;
@@ -286,16 +282,17 @@ int cms_main(int argc, char **argv)
     X509_VERIFY_PARAM *vpm = NULL;
     char *certfile = NULL, *keyfile = NULL, *contfile = NULL;
     const char *CAfile = NULL, *CApath = NULL, *CAstore = NULL;
-    char *certsoutfile = NULL;
+    char *certsoutfile = NULL, *digestname = NULL, *wrapname = NULL;
     int noCAfile = 0, noCApath = 0, noCAstore = 0;
     char *infile = NULL, *outfile = NULL, *rctfile = NULL;
-    char *passinarg = NULL, *passin = NULL, *signerfile = NULL, *originatorfile = NULL, *recipfile = NULL;
+    char *passinarg = NULL, *passin = NULL, *signerfile = NULL;
+    char *originatorfile = NULL, *recipfile = NULL, *ciphername = NULL;
     char *to = NULL, *from = NULL, *subject = NULL, *prog;
     cms_key_param *key_first = NULL, *key_param = NULL;
     int flags = CMS_DETACHED, noout = 0, print = 0, keyidx = -1, vpmtouched = 0;
     int informat = FORMAT_SMIME, outformat = FORMAT_SMIME;
     int operation = 0, ret = 1, rr_print = 0, rr_allorfirst = -1;
-    int verify_retcode = 0, rctformat = FORMAT_SMIME, keyform = FORMAT_PEM;
+    int verify_retcode = 0, rctformat = FORMAT_SMIME, keyform = FORMAT_UNDEF;
     size_t secret_keylen = 0, secret_keyidlen = 0;
     unsigned char *pwri_pass = NULL, *pwri_tmp = NULL;
     unsigned char *secret_key = NULL, *secret_keyid = NULL;
@@ -303,7 +300,6 @@ int cms_main(int argc, char **argv)
     const char *mime_eol = "\n";
     OPTION_CHOICE o;
     OSSL_LIB_CTX *libctx = app_get0_libctx();
-    const char *propq = app_get0_propq();
 
     if ((vpm = X509_VERIFY_PARAM_new()) == NULL)
         return 1;
@@ -457,7 +453,7 @@ int cms_main(int argc, char **argv)
                     goto opthelp;
             } else {
                 rcms = load_content_info(rctformat, rctin, NULL, "recipient",
-                                         libctx, propq);
+                                         libctx, app_get0_propq());
             }
             break;
         case OPT_CERTFILE:
@@ -566,8 +562,7 @@ int cms_main(int argc, char **argv)
             certsoutfile = opt_arg();
             break;
         case OPT_MD:
-            if (!opt_md(opt_arg(), &sign_md))
-                goto end;
+            digestname = opt_arg();
             break;
         case OPT_SIGNER:
             /* If previous -signer argument add signer to list */
@@ -616,7 +611,8 @@ int cms_main(int argc, char **argv)
             if (operation == SMIME_ENCRYPT) {
                 if (encerts == NULL && (encerts = sk_X509_new_null()) == NULL)
                     goto end;
-                cert = load_cert(opt_arg(), "recipient certificate file");
+                cert = load_cert(opt_arg(), FORMAT_UNDEF,
+                                 "recipient certificate file");
                 if (cert == NULL)
                     goto end;
                 sk_X509_push(encerts, cert);
@@ -626,8 +622,7 @@ int cms_main(int argc, char **argv)
             }
             break;
         case OPT_CIPHER:
-            if (!opt_cipher(opt_unknown(), &cipher))
-                goto end;
+            ciphername = opt_unknown();
             break;
         case OPT_KEYOPT:
             keyidx = -1;
@@ -680,24 +675,30 @@ int cms_main(int argc, char **argv)
                 goto end;
             break;
         case OPT_3DES_WRAP:
-# ifndef OPENSSL_NO_DES
-            wrap_cipher = EVP_des_ede3_wrap();
-# endif
-            break;
         case OPT_AES128_WRAP:
-            wrap_cipher = EVP_aes_128_wrap();
-            break;
         case OPT_AES192_WRAP:
-            wrap_cipher = EVP_aes_192_wrap();
-            break;
         case OPT_AES256_WRAP:
-            wrap_cipher = EVP_aes_256_wrap();
+            wrapname = opt_flag() + 1;
             break;
         case OPT_WRAP:
-            if (!opt_cipher(opt_unknown(), &wrap_cipher))
-                goto end;
+            wrapname = opt_unknown();
             break;
         }
+    }
+    if (!app_RAND_load())
+        goto end;
+
+    if (digestname != NULL) {
+        if (!opt_md(digestname, &sign_md))
+            goto end;
+    }
+    if (ciphername != NULL) {
+        if (!opt_cipher(ciphername, &cipher))
+            goto end;
+    }
+    if (wrapname != NULL) {
+        if (!opt_cipher(wrapname, &wrap_cipher))
+            goto end;
     }
 
     /* Remaining args are files to process. */
@@ -721,12 +722,12 @@ int cms_main(int argc, char **argv)
     if ((flags & CMS_CADES) != 0) {
         if ((flags & CMS_NOATTR) != 0) {
             BIO_puts(bio_err, "Incompatible options: "
-                     "CAdES required signed attributes\n");
+                     "CAdES requires signed attributes\n");
             goto opthelp;
         }
         if (operation == SMIME_VERIFY
                 && (flags & (CMS_NO_SIGNER_CERT_VERIFY | CMS_NO_ATTR_VERIFY)) != 0) {
-            BIO_puts(bio_err, "Incompatible options: CAdES validation require"
+            BIO_puts(bio_err, "Incompatible options: CAdES validation requires"
                      " certs and signed attributes validations\n");
             goto opthelp;
         }
@@ -794,7 +795,7 @@ int cms_main(int argc, char **argv)
     if (operation == SMIME_ENCRYPT) {
         if (!cipher) {
 # ifndef OPENSSL_NO_DES
-            cipher = EVP_des_ede3_cbc();
+            cipher = (EVP_CIPHER *)EVP_des_ede3_cbc();
 # else
             BIO_printf(bio_err, "No cipher selected\n");
             goto end;
@@ -810,7 +811,8 @@ int cms_main(int argc, char **argv)
             if ((encerts = sk_X509_new_null()) == NULL)
                 goto end;
         while (*argv) {
-            if ((cert = load_cert(*argv, "recipient certificate file")) == NULL)
+            if ((cert = load_cert(*argv, FORMAT_UNDEF,
+                                  "recipient certificate file")) == NULL)
                 goto end;
             sk_X509_push(encerts, cert);
             cert = NULL;
@@ -819,14 +821,14 @@ int cms_main(int argc, char **argv)
     }
 
     if (certfile != NULL) {
-        if (!load_certs(certfile, &other, NULL, "certificate file")) {
+        if (!load_certs(certfile, 0, &other, NULL, "certificate file")) {
             ERR_print_errors(bio_err);
             goto end;
         }
     }
 
     if (recipfile != NULL && (operation == SMIME_DECRYPT)) {
-        if ((recip = load_cert(recipfile,
+        if ((recip = load_cert(recipfile, FORMAT_UNDEF,
                                "recipient certificate file")) == NULL) {
             ERR_print_errors(bio_err);
             goto end;
@@ -834,7 +836,7 @@ int cms_main(int argc, char **argv)
     }
 
     if (originatorfile != NULL) {
-        if ((originator = load_cert(originatorfile,
+        if ((originator = load_cert(originatorfile, FORMAT_UNDEF,
                                     "originator certificate file")) == NULL) {
              ERR_print_errors(bio_err);
              goto end;
@@ -842,7 +844,7 @@ int cms_main(int argc, char **argv)
     }
 
     if (operation == SMIME_SIGN_RECEIPT) {
-        if ((signer = load_cert(signerfile,
+        if ((signer = load_cert(signerfile, FORMAT_UNDEF,
                                 "receipt signer certificate file")) == NULL) {
             ERR_print_errors(bio_err);
             goto end;
@@ -870,7 +872,7 @@ int cms_main(int argc, char **argv)
         goto end;
 
     if (operation & SMIME_IP) {
-        cms = load_content_info(informat, in, &indata, "SMIME", libctx, propq);
+        cms = load_content_info(informat, in, &indata, "SMIME", libctx, app_get0_propq());
         if (cms == NULL)
             goto end;
         if (contfile != NULL) {
@@ -901,7 +903,7 @@ int cms_main(int argc, char **argv)
         }
 
         rcms = load_content_info(rctformat, rctin, NULL, "recipient", libctx,
-                                 propq);
+                                 app_get0_propq());
         if (rcms == NULL)
             goto end;
     }
@@ -922,15 +924,15 @@ int cms_main(int argc, char **argv)
     ret = 3;
 
     if (operation == SMIME_DATA_CREATE) {
-        cms = CMS_data_create_ex(in, flags, libctx, propq);
+        cms = CMS_data_create_ex(in, flags, libctx, app_get0_propq());
     } else if (operation == SMIME_DIGEST_CREATE) {
-        cms = CMS_digest_create_ex(in, sign_md, flags, libctx, propq);
+        cms = CMS_digest_create_ex(in, sign_md, flags, libctx, app_get0_propq());
     } else if (operation == SMIME_COMPRESS) {
         cms = CMS_compress(in, -1, flags);
     } else if (operation == SMIME_ENCRYPT) {
         int i;
         flags |= CMS_PARTIAL;
-        cms = CMS_encrypt_ex(NULL, in, cipher, flags, libctx, propq);
+        cms = CMS_encrypt_ex(NULL, in, cipher, flags, libctx, app_get0_propq());
         if (cms == NULL)
             goto end;
         for (i = 0; i < sk_X509_num(encerts); i++) {
@@ -963,7 +965,7 @@ int cms_main(int argc, char **argv)
                 goto end;
 
             if (CMS_RecipientInfo_type(ri) == CMS_RECIPINFO_AGREE
-                && wrap_cipher) {
+                    && wrap_cipher != NULL) {
                 EVP_CIPHER_CTX *wctx;
                 wctx = CMS_RecipientInfo_kari_get0_ctx(ri);
                 EVP_EncryptInit_ex(wctx, wrap_cipher, NULL, NULL, NULL);
@@ -996,7 +998,7 @@ int cms_main(int argc, char **argv)
         }
     } else if (operation == SMIME_ENCRYPTED_ENCRYPT) {
         cms = CMS_EncryptedData_encrypt_ex(in, cipher, secret_key,
-                                           secret_keylen, flags, libctx, propq);
+                                           secret_keylen, flags, libctx, app_get0_propq());
 
     } else if (operation == SMIME_SIGN_RECEIPT) {
         CMS_ContentInfo *srcms = NULL;
@@ -1024,15 +1026,14 @@ int cms_main(int argc, char **argv)
                     flags |= CMS_STREAM;
             }
             flags |= CMS_PARTIAL;
-            cms = CMS_sign_ex(NULL, NULL, other, in, flags, libctx, propq);
+            cms = CMS_sign_ex(NULL, NULL, other, in, flags, libctx, app_get0_propq());
             if (cms == NULL)
                 goto end;
             if (econtent_type != NULL)
                 CMS_set1_eContentType(cms, econtent_type);
 
             if (rr_to != NULL) {
-                rr = make_receipt_request(rr_to, rr_allorfirst, rr_from, libctx,
-                                          propq);
+                rr = make_receipt_request(rr_to, rr_allorfirst, rr_from, libctx);
                 if (rr == NULL) {
                     BIO_puts(bio_err,
                              "Signed Receipt Request Creation Error\n");
@@ -1049,7 +1050,7 @@ int cms_main(int argc, char **argv)
             signerfile = sk_OPENSSL_STRING_value(sksigners, i);
             keyfile = sk_OPENSSL_STRING_value(skkeys, i);
 
-            signer = load_cert(signerfile, "signer certificate");
+            signer = load_cert(signerfile, FORMAT_UNDEF, "signer certificate");
             if (signer == NULL) {
                 ret = 2;
                 goto end;
@@ -1241,6 +1242,9 @@ int cms_main(int argc, char **argv)
     X509_free(recip);
     X509_free(signer);
     EVP_PKEY_free(key);
+    EVP_CIPHER_free(cipher);
+    EVP_CIPHER_free(wrap_cipher);
+    EVP_MD_free(sign_md);
     CMS_ContentInfo_free(cms);
     CMS_ContentInfo_free(rcms);
     release_engine(e);
@@ -1389,7 +1393,7 @@ static STACK_OF(GENERAL_NAMES) *make_names_stack(STACK_OF(OPENSSL_STRING) *ns)
 static CMS_ReceiptRequest *make_receipt_request(
    STACK_OF(OPENSSL_STRING) *rr_to, int rr_allorfirst,
    STACK_OF(OPENSSL_STRING) *rr_from,
-   OSSL_LIB_CTX *libctx, const char *propq)
+   OSSL_LIB_CTX *libctx)
 {
     STACK_OF(GENERAL_NAMES) *rct_to = NULL, *rct_from = NULL;
     CMS_ReceiptRequest *rr;
@@ -1404,7 +1408,7 @@ static CMS_ReceiptRequest *make_receipt_request(
         rct_from = NULL;
     }
     rr = CMS_ReceiptRequest_create0_ex(NULL, -1, rr_allorfirst, rct_from,
-                                       rct_to, libctx, propq);
+                                       rct_to, libctx);
     return rr;
  err:
     sk_GENERAL_NAMES_pop_free(rct_to, GENERAL_NAMES_free);
@@ -1428,5 +1432,3 @@ static int cms_set_pkey_param(EVP_PKEY_CTX *pctx,
     }
     return 1;
 }
-
-#endif

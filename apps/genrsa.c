@@ -1,5 +1,5 @@
 /*
- * Copyright 1995-2020 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 1995-2021 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -32,7 +32,7 @@ static int verbose = 0;
 static int genrsa_cb(EVP_PKEY_CTX *ctx);
 
 typedef enum OPTION_choice {
-    OPT_ERR = -1, OPT_EOF = 0, OPT_HELP,
+    OPT_COMMON,
 #ifndef OPENSSL_NO_DEPRECATED_3_0
     OPT_3,
 #endif
@@ -82,11 +82,11 @@ int genrsa_main(int argc, char **argv)
     BIO *out = NULL;
     EVP_PKEY *pkey = NULL;
     EVP_PKEY_CTX *ctx = NULL;
-    const EVP_CIPHER *enc = NULL;
+    EVP_CIPHER *enc = NULL;
     int ret = 1, num = DEFBITS, private = 0, primes = DEFPRIMES;
     unsigned long f4 = RSA_F4;
     char *outfile = NULL, *passoutarg = NULL, *passout = NULL;
-    char *prog, *hexe, *dece;
+    char *prog, *hexe, *dece, *ciphername = NULL;
     OPTION_CHOICE o;
     int traditional = 0;
 
@@ -131,12 +131,10 @@ opthelp:
             passoutarg = opt_arg();
             break;
         case OPT_CIPHER:
-            if (!opt_cipher(opt_unknown(), &enc))
-                goto end;
+            ciphername = opt_unknown();
             break;
         case OPT_PRIMES:
-            if (!opt_int(opt_arg(), &primes))
-                goto end;
+            primes = opt_int_arg();
             break;
         case OPT_VERBOSE:
             verbose = 1;
@@ -164,7 +162,14 @@ opthelp:
         goto opthelp;
     }
 
+    if (!app_RAND_load())
+        goto end;
+
     private = 1;
+    if (ciphername != NULL) {
+        if (!opt_cipher(ciphername, &enc))
+            goto end;
+    }
     if (!app_passwd(NULL, passoutarg, NULL, &passout)) {
         BIO_printf(bio_err, "Error getting password\n");
         goto end;
@@ -237,6 +242,7 @@ opthelp:
     BN_GENCB_free(cb);
     EVP_PKEY_CTX_free(ctx);
     EVP_PKEY_free(pkey);
+    EVP_CIPHER_free(enc);
     BIO_free_all(out);
     release_engine(eng);
     OPENSSL_free(passout);

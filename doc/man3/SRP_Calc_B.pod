@@ -18,6 +18,10 @@ SRP_Calc_client_key
 
  #include <openssl/srp.h>
 
+Deprecated since OpenSSL 3.0, can be hidden entirely by defining
+B<OPENSSL_API_COMPAT> with a suitable version value, see
+L<openssl_user_macros(7)>:
+
  /* server side .... */
  BIGNUM *SRP_Calc_server_key(const BIGNUM *A, const BIGNUM *v, const BIGNUM *u,
                              const BIGNUM *b, const BIGNUM *N);
@@ -43,6 +47,9 @@ SRP_Calc_client_key
 
 =head1 DESCRIPTION
 
+All of the functions described on this page are deprecated. There are no
+available replacement functions at this time.
+
 The SRP functions described on this page are used to calculate various
 parameters and keys used by SRP as defined in RFC2945. The server key and I<B>
 and I<u> parameters are used on the server side and are calculated via
@@ -56,7 +63,7 @@ BIGNUM parameters to these functions.
 Most of these functions come in two forms. Those that take a I<libctx> and
 I<propq> parameter, and those that don't. Any cryptogrpahic functions that
 are fetched and used during the calculation use the provided I<libctx> and
-I<propq>. See L<provider(7)/Fetching algorithms> for more details. The variants
+I<propq>. See L<crypto(7)/ALGORITHM FETCHING> for more details. The variants
 that do not take a I<libctx> and I<propq> parameter use the default library
 context and property query string. The SRP_Calc_server_key() and SRP_Calc_A()
 functions do not have a form that takes I<libctx> or I<propq> parameters because
@@ -74,11 +81,16 @@ L<SRP_user_pwd_new(3)>
 
 =head1 HISTORY
 
-These functions were added in OpenSSL 1.0.1.
+SRP_Calc_B_ex, SRP_Calc_u_ex, SRP_Calc_client_key_ex and SRP_Calc_x_ex were
+introduced in OpenSSL 3.0.
+
+All of the other functions were added in OpenSSL 1.0.1.
+
+All of these functions were deprecated in OpenSSL 3.0.
 
 =head1 COPYRIGHT
 
-Copyright 2020 The OpenSSL Project Authors. All Rights Reserved.
+Copyright 2020-2021 The OpenSSL Project Authors. All Rights Reserved.
 
 Licensed under the Apache License 2.0 (the "License").  You may not use
 this file except in compliance with the License.  You can obtain a copy

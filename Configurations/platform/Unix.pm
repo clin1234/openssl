@@ -32,7 +32,7 @@ sub shlibextsimple      { (my $x = $target{shared_extension} || '.so')
                               =~ s|\.\$\(SHLIB_VERSION_NUMBER\)||;
                           $x; }
 sub shlibvariant        { $target{shlib_variant} || "" }
-sub makedepprog         { $disabled{makedepend} ? undef : $config{makedepprog} }
+sub makedepcmd          { $disabled{makedepend} ? undef : $config{makedepcmd} }
 
 # No conversion of assembler extension on Unix
 sub asm {
@@ -64,6 +64,10 @@ sub sharedname_simple {
 sub sharedlib_simple {
     return platform::BASE::__concat($_[0]->sharedname_simple($_[1]),
                                     $_[0]->shlibextsimple());
+}
+
+sub sharedlib_import {
+    return undef;
 }
 
 1;

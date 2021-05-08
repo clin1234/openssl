@@ -1,11 +1,20 @@
 /*
- * Copyright 1995-2020 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 1995-2021 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
  * in the file LICENSE in the source distribution or at
  * https://www.openssl.org/source/license.html
  */
+
+#if defined (__TANDEM) && defined (_SPT_MODEL_)
+  /*
+   * These definitions have to come first in SPT due to scoping of the
+   * declarations in c99 associated with SPT use of stat.
+   */
+# include <sys/types.h>
+# include <sys/stat.h>
+#endif
 
 #include "e_os.h"
 #include "internal/cryptlib.h"
@@ -252,8 +261,9 @@ static int get_cert_by_subject_ex(X509_LOOKUP *xl, X509_LOOKUP_TYPE type,
     }
 
     ctx = (BY_DIR *)xl->method_data;
-
-    h = X509_NAME_hash(name);
+    h = X509_NAME_hash_ex(name, libctx, propq, &i);
+    if (i == 0)
+        goto finish;
     for (i = 0; i < sk_BY_DIR_ENTRY_num(ctx->dirs); i++) {
         BY_DIR_ENTRY *ent;
         int idx;
@@ -267,7 +277,8 @@ static int get_cert_by_subject_ex(X509_LOOKUP *xl, X509_LOOKUP_TYPE type,
         }
         if (type == X509_LU_CRL && ent->hashes) {
             htmp.hash = h;
-            CRYPTO_THREAD_read_lock(ctx->lock);
+            if (!CRYPTO_THREAD_read_lock(ctx->lock))
+                goto finish;
             idx = sk_BY_DIR_HASH_find(ent->hashes, &htmp);
             if (idx >= 0) {
                 hent = sk_BY_DIR_HASH_value(ent->hashes, idx);
@@ -345,7 +356,8 @@ static int get_cert_by_subject_ex(X509_LOOKUP *xl, X509_LOOKUP_TYPE type,
         /* If a CRL, update the last file suffix added for this */
 
         if (type == X509_LU_CRL) {
-            CRYPTO_THREAD_write_lock(ctx->lock);
+            if (!CRYPTO_THREAD_write_lock(ctx->lock))
+                goto finish;
             /*
              * Look for entry again in case another thread added an entry
              * first.

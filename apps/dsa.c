@@ -1,5 +1,5 @@
 /*
- * Copyright 1995-2020 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 1995-2021 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -33,7 +33,7 @@
 #endif
 
 typedef enum OPTION_choice {
-    OPT_ERR = -1, OPT_EOF = 0, OPT_HELP,
+    OPT_COMMON,
     OPT_INFORM, OPT_OUTFORM, OPT_IN, OPT_OUT, OPT_ENGINE,
     /* Do not change the order here; see case statements below */
     OPT_PVK_NONE, OPT_PVK_WEAK, OPT_PVK_STRONG,
@@ -79,15 +79,15 @@ int dsa_main(int argc, char **argv)
     BIO *out = NULL;
     ENGINE *e = NULL;
     EVP_PKEY *pkey = NULL;
-    const EVP_CIPHER *enc = NULL;
+    EVP_CIPHER *enc = NULL;
     char *infile = NULL, *outfile = NULL, *prog;
     char *passin = NULL, *passout = NULL, *passinarg = NULL, *passoutarg = NULL;
     OPTION_CHOICE o;
-    int informat = FORMAT_PEM, outformat = FORMAT_PEM, text = 0, noout = 0;
+    int informat = FORMAT_UNDEF, outformat = FORMAT_PEM, text = 0, noout = 0;
     int modulus = 0, pubin = 0, pubout = 0, ret = 1;
     int pvk_encr = DEFAULT_PVK_ENCR_STRENGTH;
     int private = 0;
-    const char *output_type = NULL;
+    const char *output_type = NULL, *ciphername = NULL;
     const char *output_structure = NULL;
     int selection = 0;
     OSSL_ENCODER_CTX *ectx = NULL;
@@ -151,8 +151,7 @@ int dsa_main(int argc, char **argv)
             pubout = 1;
             break;
         case OPT_CIPHER:
-            if (!opt_cipher(opt_unknown(), &enc))
-                goto end;
+            ciphername = opt_unknown();
             break;
         case OPT_PROV_CASES:
             if (!opt_provider(o))
@@ -166,6 +165,10 @@ int dsa_main(int argc, char **argv)
     if (argc != 0)
         goto opthelp;
 
+    if (ciphername != NULL) {
+        if (!opt_cipher(ciphername, &enc))
+            goto end;
+    }
     private = pubin || pubout ? 0 : 1;
     if (text && !pubin)
         private = 1;
@@ -257,11 +260,25 @@ int dsa_main(int argc, char **argv)
     }
 
     /* Perform the encoding */
-    ectx = OSSL_ENCODER_CTX_new_by_EVP_PKEY(pkey, selection, output_type,
-                                            output_structure, NULL);
+    ectx = OSSL_ENCODER_CTX_new_for_pkey(pkey, selection, output_type,
+                                         output_structure, NULL);
     if (OSSL_ENCODER_CTX_get_num_encoders(ectx) == 0) {
         BIO_printf(bio_err, "%s format not supported\n", output_type);
         goto end;
+    }
+
+    /* Passphrase setup */
+    if (enc != NULL)
+        OSSL_ENCODER_CTX_set_cipher(ectx, EVP_CIPHER_name(enc), NULL);
+
+    /* Default passphrase prompter */
+    if (enc != NULL || outformat == FORMAT_PVK) {
+        OSSL_ENCODER_CTX_set_passphrase_ui(ectx, get_ui_method(), NULL);
+        if (passout != NULL)
+            /* When passout given, override the passphrase prompter */
+            OSSL_ENCODER_CTX_set_passphrase(ectx,
+                                            (const unsigned char *)passout,
+                                            strlen(passout));
     }
 
     /* PVK requires a bit more */
@@ -286,6 +303,7 @@ int dsa_main(int argc, char **argv)
     OSSL_ENCODER_CTX_free(ectx);
     BIO_free_all(out);
     EVP_PKEY_free(pkey);
+    EVP_CIPHER_free(enc);
     release_engine(e);
     OPENSSL_free(passin);
     OPENSSL_free(passout);

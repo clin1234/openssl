@@ -1,5 +1,5 @@
 # Auxiliary program source
-IF[{- $config{target} =~ /^(?:VC-|mingw)/ -}]
+IF[{- $config{target} =~ /^(?:VC-|mingw|BC-)/ -}]
   # It's called 'init', but doesn't have much 'init' in it...
   $AUXLIBAPPSSRC=win32_init.c
 ENDIF
@@ -16,4 +16,8 @@ IF[{- !$disabled{apps} -}]
   LIBS{noinst}=../libapps.a
   SOURCE[../libapps.a]=$LIBAPPSSRC $AUXLIBAPPSSRC
   INCLUDE[../libapps.a]=../.. ../../include ../include
+ENDIF
+
+IF[{- !$disabled{srp} -}]
+  SOURCE[../libapps.a]=tlssrp_depr.c
 ENDIF

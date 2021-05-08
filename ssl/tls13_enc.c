@@ -1,5 +1,5 @@
 /*
- * Copyright 2016-2020 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2016-2021 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -105,8 +105,7 @@ int tls13_hkdf_expand(SSL *s, const EVP_MD *md, const unsigned char *secret,
                                              hkdflabel, hkdflabellen);
     *p++ = OSSL_PARAM_construct_end();
 
-    ret = EVP_KDF_CTX_set_params(kctx, params) <= 0
-        || EVP_KDF_derive(kctx, out, outlen) <= 0;
+    ret = EVP_KDF_derive(kctx, out, outlen, params) <= 0;
 
     EVP_KDF_CTX_free(kctx);
 
@@ -258,8 +257,7 @@ int tls13_generate_secret(SSL *s, const EVP_MD *md,
                                              prevsecretlen);
     *p++ = OSSL_PARAM_construct_end();
 
-    ret = EVP_KDF_CTX_set_params(kctx, params) <= 0
-        || EVP_KDF_derive(kctx, outsecret, mdlen) <= 0;
+    ret = EVP_KDF_derive(kctx, outsecret, mdlen, params) <= 0;
 
     if (ret != 0)
         SSLfatal(s, SSL_AD_INTERNAL_ERROR, ERR_R_INTERNAL_ERROR);
@@ -308,25 +306,19 @@ size_t tls13_final_finish_mac(SSL *s, const char *str, size_t slen,
                              unsigned char *out)
 {
     const char *mdname = EVP_MD_name(ssl_handshake_md(s));
-    EVP_MAC *hmac = EVP_MAC_fetch(s->ctx->libctx, "HMAC", s->ctx->propq);
     unsigned char hash[EVP_MAX_MD_SIZE];
     unsigned char finsecret[EVP_MAX_MD_SIZE];
+    unsigned char *key = NULL;
+    unsigned int len = 0;
     size_t hashlen, ret = 0;
-    EVP_MAC_CTX *ctx = NULL;
-    OSSL_PARAM params[4], *p = params;
-
-    if (hmac == NULL) {
-        SSLfatal(s, SSL_AD_INTERNAL_ERROR, ERR_R_INTERNAL_ERROR);
-        goto err;
-    }
+    OSSL_PARAM params[2], *p = params;
 
     /* Safe to cast away const here since we're not "getting" any data */
-    *p++ = OSSL_PARAM_construct_utf8_string(OSSL_ALG_PARAM_DIGEST,
-                                            (char *)mdname, 0);
     if (s->ctx->propq != NULL)
         *p++ = OSSL_PARAM_construct_utf8_string(OSSL_ALG_PARAM_PROPERTIES,
                                                 (char *)s->ctx->propq,
                                                 0);
+    *p = OSSL_PARAM_construct_end();
 
     if (!ssl_handshake_hash(s, hash, sizeof(hash), &hashlen)) {
         /* SSLfatal() already called */
@@ -334,40 +326,28 @@ size_t tls13_final_finish_mac(SSL *s, const char *str, size_t slen,
     }
 
     if (str == s->method->ssl3_enc->server_finished_label) {
-        *p++ = OSSL_PARAM_construct_octet_string(OSSL_MAC_PARAM_KEY,
-                                                 s->server_finished_secret,
-                                                 hashlen);
+        key = s->server_finished_secret;
     } else if (SSL_IS_FIRST_HANDSHAKE(s)) {
-        *p++ = OSSL_PARAM_construct_octet_string(OSSL_MAC_PARAM_KEY,
-                                                 s->client_finished_secret,
-                                                 hashlen);
+        key = s->client_finished_secret;
     } else {
         if (!tls13_derive_finishedkey(s, ssl_handshake_md(s),
                                       s->client_app_traffic_secret,
                                       finsecret, hashlen))
             goto err;
-
-        *p++ = OSSL_PARAM_construct_octet_string(OSSL_MAC_PARAM_KEY, finsecret,
-                                                 hashlen);
+        key = finsecret;
     }
-    *p++ = OSSL_PARAM_construct_end();
 
-    ctx = EVP_MAC_CTX_new(hmac);
-    if (ctx == NULL
-            || !EVP_MAC_CTX_set_params(ctx, params)
-            || !EVP_MAC_init(ctx)
-            || !EVP_MAC_update(ctx, hash, hashlen)
-               /* outsize as per sizeof(peer_finish_md) */
-            || !EVP_MAC_final(ctx, out, &hashlen, EVP_MAX_MD_SIZE * 2)) {
+    if (!EVP_Q_mac(s->ctx->libctx, "HMAC", s->ctx->propq, mdname,
+                   params, key, hashlen, hash, hashlen,
+                   /* outsize as per sizeof(peer_finish_md) */
+                   out, EVP_MAX_MD_SIZE * 2, &len)) {
         SSLfatal(s, SSL_AD_INTERNAL_ERROR, ERR_R_INTERNAL_ERROR);
         goto err;
     }
 
-    ret = hashlen;
+    ret = len;
  err:
     OPENSSL_cleanse(finsecret, sizeof(finsecret));
-    EVP_MAC_CTX_free(ctx);
-    EVP_MAC_free(hmac);
     return ret;
 }
 
@@ -383,7 +363,8 @@ int tls13_setup_key_block(SSL *s)
     s->session->cipher = s->s3.tmp.new_cipher;
     if (!ssl_cipher_get_evp(s->ctx, s->session, &c, &hash, NULL, NULL, NULL,
                             0)) {
-        SSLfatal(s, SSL_AD_INTERNAL_ERROR, SSL_R_CIPHER_OR_HASH_UNAVAILABLE);
+        /* Error is already recorded */
+        SSLfatal_alert(s, SSL_AD_INTERNAL_ERROR);
         return 0;
     }
 
@@ -595,8 +576,8 @@ int tls13_change_cipher_state(SSL *s, int which)
              * it again
              */
             if (!ssl_cipher_get_evp_cipher(s->ctx, sslcipher, &cipher)) {
-                SSLfatal(s, SSL_AD_INTERNAL_ERROR,
-                         SSL_R_ALGORITHM_FETCH_FAILED);
+                /* Error is already recorded */
+                SSLfatal_alert(s, SSL_AD_INTERNAL_ERROR);
                 EVP_MD_CTX_free(mdctx);
                 goto err;
             }
@@ -758,8 +739,9 @@ int tls13_change_cipher_state(SSL *s, int which)
         s->statem.enc_write_state = ENC_WRITE_STATE_VALID;
 #ifndef OPENSSL_NO_KTLS
 # if defined(OPENSSL_KTLS_TLS13)
-    if (!(which & SSL3_CC_WRITE) || !(which & SSL3_CC_APPLICATION)
-        || ((which & SSL3_CC_WRITE) && (s->mode & SSL_MODE_NO_KTLS_TX)))
+    if (!(which & SSL3_CC_WRITE)
+            || !(which & SSL3_CC_APPLICATION)
+            || (s->options & SSL_OP_ENABLE_KTLS) == 0)
         goto skip_ktls;
 
     /* ktls supports only the maximum fragment size */

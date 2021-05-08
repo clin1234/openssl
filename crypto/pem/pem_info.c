@@ -1,5 +1,5 @@
 /*
- * Copyright 1995-2020 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 1995-2021 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -22,6 +22,7 @@
 #include <openssl/pem.h>
 #include <openssl/rsa.h>
 #include <openssl/dsa.h>
+#include "crypto/evp.h"
 
 #ifndef OPENSSL_NO_STDIO
 STACK_OF(X509_INFO)
@@ -48,13 +49,13 @@ STACK_OF(X509_INFO) *PEM_X509_INFO_read(FILE *fp, STACK_OF(X509_INFO) *sk,
 }
 #endif
 
-STACK_OF(X509_INFO)
-*PEM_X509_INFO_read_bio_ex(BIO *bp, STACK_OF(X509_INFO) *sk,
-                           pem_password_cb *cb, void *u, OSSL_LIB_CTX *libctx,
-                           const char *propq)
+STACK_OF(X509_INFO) *PEM_X509_INFO_read_bio_ex(BIO *bp, STACK_OF(X509_INFO) *sk,
+                                               pem_password_cb *cb, void *u,
+                                               OSSL_LIB_CTX *libctx,
+                                               const char *propq)
 {
     X509_INFO *xi = NULL;
-    char *name = NULL, *header = NULL;
+    char *name = NULL, *header = NULL, *str;
     void *pp;
     unsigned char *data = NULL;
     const unsigned char *p;
@@ -77,19 +78,22 @@ STACK_OF(X509_INFO)
     for (;;) {
         raw = 0;
         ptype = 0;
+        ERR_set_mark();
         i = PEM_read_bio(bp, &name, &header, &data, &len);
         if (i == 0) {
             error = ERR_GET_REASON(ERR_peek_last_error());
             if (error == PEM_R_NO_START_LINE) {
-                ERR_clear_error();
+                ERR_pop_to_mark();
                 break;
             }
+            ERR_clear_last_mark();
             goto err;
         }
+        ERR_clear_last_mark();
  start:
-        if ((strcmp(name, PEM_STRING_X509) == 0) ||
-            (strcmp(name, PEM_STRING_X509_OLD) == 0)) {
-            d2i = (D2I_OF(void)) d2i_X509;
+        if (strcmp(name, PEM_STRING_X509) == 0
+                || strcmp(name, PEM_STRING_X509_OLD) == 0
+                || strcmp(name, PEM_STRING_X509_TRUSTED) == 0) {
             if (xi->x509 != NULL) {
                 if (!sk_X509_INFO_push(ret, xi))
                     goto err;
@@ -97,19 +101,10 @@ STACK_OF(X509_INFO)
                     goto err;
                 goto start;
             }
-            xi->x509 = X509_new_ex(libctx, propq);
-            if (xi->x509 == NULL)
-                goto err;
-            pp = &(xi->x509);
-        } else if ((strcmp(name, PEM_STRING_X509_TRUSTED) == 0)) {
-            d2i = (D2I_OF(void)) d2i_X509_AUX;
-            if (xi->x509 != NULL) {
-                if (!sk_X509_INFO_push(ret, xi))
-                    goto err;
-                if ((xi = X509_INFO_new()) == NULL)
-                    goto err;
-                goto start;
-            }
+            if ((strcmp(name, PEM_STRING_X509_TRUSTED) == 0))
+                d2i = (D2I_OF(void)) d2i_X509_AUX;
+            else
+                d2i = (D2I_OF(void)) d2i_X509;
             xi->x509 = X509_new_ex(libctx, propq);
             if (xi->x509 == NULL)
                 goto err;
@@ -124,8 +119,7 @@ STACK_OF(X509_INFO)
                 goto start;
             }
             pp = &(xi->crl);
-        } else if (strcmp(name, PEM_STRING_RSA) == 0) {
-            d2i = (D2I_OF(void)) d2i_RSAPrivateKey;
+        } else if ((str = strstr(name, PEM_STRING_PKCS8INF)) != NULL) {
             if (xi->x_pkey != NULL) {
                 if (!sk_X509_INFO_push(ret, xi))
                     goto err;
@@ -133,65 +127,25 @@ STACK_OF(X509_INFO)
                     goto err;
                 goto start;
             }
-
-            xi->enc_data = NULL;
-            xi->enc_len = 0;
-
-            xi->x_pkey = X509_PKEY_new();
-            if (xi->x_pkey == NULL)
-                goto err;
-            ptype = EVP_PKEY_RSA;
-            pp = &xi->x_pkey->dec_pkey;
-            if ((int)strlen(header) > 10) /* assume encrypted */
-                raw = 1;
-        } else
-#ifndef OPENSSL_NO_DSA
-        if (strcmp(name, PEM_STRING_DSA) == 0) {
-            d2i = (D2I_OF(void)) d2i_DSAPrivateKey;
-            if (xi->x_pkey != NULL) {
-                if (!sk_X509_INFO_push(ret, xi))
-                    goto err;
-                if ((xi = X509_INFO_new()) == NULL)
-                    goto err;
-                goto start;
+            if (str == name || strcmp(name, PEM_STRING_PKCS8) == 0) {
+                ptype = EVP_PKEY_NONE;
+            } else {
+                /* chop " PRIVATE KEY" */
+                *--str = '\0';
+                ptype = evp_pkey_name2type(name);
             }
-
             xi->enc_data = NULL;
             xi->enc_len = 0;
 
+            d2i = (D2I_OF(void)) d2i_AutoPrivateKey;
             xi->x_pkey = X509_PKEY_new();
             if (xi->x_pkey == NULL)
                 goto err;
-            ptype = EVP_PKEY_DSA;
             pp = &xi->x_pkey->dec_pkey;
-            if ((int)strlen(header) > 10) /* assume encrypted */
+            if ((int)strlen(header) > 10 /* assume encrypted */
+                   || strcmp(name, PEM_STRING_PKCS8) == 0)
                 raw = 1;
-        } else
-#endif
-#ifndef OPENSSL_NO_EC
-        if (strcmp(name, PEM_STRING_ECPRIVATEKEY) == 0) {
-            d2i = (D2I_OF(void)) d2i_ECPrivateKey;
-            if (xi->x_pkey != NULL) {
-                if (!sk_X509_INFO_push(ret, xi))
-                    goto err;
-                if ((xi = X509_INFO_new()) == NULL)
-                    goto err;
-                goto start;
-            }
-
-            xi->enc_data = NULL;
-            xi->enc_len = 0;
-
-            xi->x_pkey = X509_PKEY_new();
-            if (xi->x_pkey == NULL)
-                goto err;
-            ptype = EVP_PKEY_EC;
-            pp = &xi->x_pkey->dec_pkey;
-            if ((int)strlen(header) > 10) /* assume encrypted */
-                raw = 1;
-        } else
-#endif
-        {
+        } else { /* unknown */
             d2i = NULL;
             pp = NULL;
         }
@@ -206,7 +160,8 @@ STACK_OF(X509_INFO)
                     goto err;
                 p = data;
                 if (ptype) {
-                    if (!d2i_PrivateKey(ptype, pp, &p, len)) {
+                    if (d2i_PrivateKey_ex(ptype, pp, &p, len,
+                                          libctx, propq) == NULL) {
                         ERR_raise(ERR_LIB_PEM, ERR_R_ASN1_LIB);
                         goto err;
                     }
@@ -214,15 +169,13 @@ STACK_OF(X509_INFO)
                     ERR_raise(ERR_LIB_PEM, ERR_R_ASN1_LIB);
                     goto err;
                 }
-            } else {            /* encrypted RSA data */
+            } else {            /* encrypted key data */
                 if (!PEM_get_EVP_CIPHER_INFO(header, &xi->enc_cipher))
                     goto err;
                 xi->enc_data = (char *)data;
                 xi->enc_len = (int)len;
                 data = NULL;
             }
-        } else {
-            /* unknown */
         }
         OPENSSL_free(name);
         name = NULL;
@@ -279,7 +232,7 @@ int PEM_X509_INFO_write_bio(BIO *bp, const X509_INFO *xi, EVP_CIPHER *enc,
     const unsigned char *iv = NULL;
 
     if (enc != NULL) {
-        objstr = OBJ_nid2sn(EVP_CIPHER_nid(enc));
+        objstr = EVP_CIPHER_name(enc);
         if (objstr == NULL
                    /*
                     * Check "Proc-Type: 4,Encrypted\nDEK-Info: objstr,hex-iv\n"
@@ -314,7 +267,7 @@ int PEM_X509_INFO_write_bio(BIO *bp, const X509_INFO *xi, EVP_CIPHER *enc,
              * than what the user has passed us ... as we have to match
              * exactly for some strange reason
              */
-            objstr = OBJ_nid2sn(EVP_CIPHER_nid(xi->enc_cipher.cipher));
+            objstr = EVP_CIPHER_name(xi->enc_cipher.cipher);
             if (objstr == NULL) {
                 ERR_raise(ERR_LIB_PEM, PEM_R_UNSUPPORTED_CIPHER);
                 goto err;

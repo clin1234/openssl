@@ -1,5 +1,5 @@
 /*
- * Copyright 1995-2020 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 1995-2021 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -13,6 +13,8 @@
 #include <string.h>
 #ifdef __TANDEM
 # include <strings.h> /* strcasecmp */
+# include <sys/types.h> /* needed for stat.h */
+# include <sys/stat.h> /* struct stat */
 #endif
 #include "internal/cryptlib.h"
 #include "internal/o_dir.h"
@@ -186,6 +188,23 @@ static int def_load(CONF *conf, const char *name, long *line)
     return ret;
 }
 
+
+/* Parse a boolean value and fill in *flag. Return 0 on error. */
+static int parsebool(const char *pval, int *flag)
+{
+    if (strcasecmp(pval, "on") == 0
+            || strcasecmp(pval, "true") == 0) {
+        *flag = 1;
+    } else if (strcasecmp(pval, "off") == 0
+            || strcasecmp(pval, "false") == 0) {
+        *flag = 0;
+    } else {
+        ERR_raise(ERR_LIB_CONF, CONF_R_INVALID_PRAGMA);
+        return 0;
+    }
+    return 1;
+}
+
 static int def_load_bio(CONF *conf, BIO *in, long *line)
 {
 /* The macro BUFSIZE conflicts with a system macro in VxWorks */
@@ -194,6 +213,7 @@ static int def_load_bio(CONF *conf, BIO *in, long *line)
     BUF_MEM *buff = NULL;
     char *s, *p, *end;
     int again;
+    int first_call = 1;
     long eline = 0;
     char btmp[DECIMAL_SIZE(eline) + 1];
     CONF_VALUE *v = NULL, *tv;
@@ -239,11 +259,25 @@ static int def_load_bio(CONF *conf, BIO *in, long *line)
         p = &(buff->data[bufnum]);
         *p = '\0';
  read_retry:
-        BIO_gets(in, p, CONFBUFSIZE - 1);
+        if (in != NULL && BIO_gets(in, p, CONFBUFSIZE - 1) < 0)
+            goto err;
         p[CONFBUFSIZE - 1] = '\0';
         ii = i = strlen(p);
+        if (first_call) {
+            /* Other BOMs imply unsupported multibyte encoding,
+             * so don't strip them and let the error raise */
+            const unsigned char utf8_bom[3] = {0xEF, 0xBB, 0xBF};
+
+            if (i >= 3 && memcmp(p, utf8_bom, 3) == 0) {
+                memmove(p, p + 3, i - 3);
+                p[i - 3] = 0;
+                i -= 3;
+                ii -= 3;
+            }
+            first_call = 0;
+        }
         if (i == 0 && !again) {
-            /* the currently processed BIO is at EOF */
+            /* the currently processed BIO is NULL or at EOF */
             BIO *parent;
 
 #ifndef OPENSSL_NO_POSIX_IO
@@ -380,19 +414,22 @@ static int def_load_bio(CONF *conf, BIO *in, long *line)
                  * Known pragmas:
                  *
                  * dollarid     takes "on", "true or "off", "false"
+                 * abspath      takes "on", "true or "off", "false"
+                 * includedir   directory prefix
                  */
                 if (strcmp(p, "dollarid") == 0) {
-                    if (strcmp(pval, "on") == 0
-                        || strcmp(pval, "true") == 0) {
-                        conf->flag_dollarid = 1;
-                    } else if (strcmp(pval, "off") == 0
-                               || strcmp(pval, "false") == 0) {
-                        conf->flag_dollarid = 0;
-                    } else {
-                        ERR_raise(ERR_LIB_CONF, CONF_R_INVALID_PRAGMA);
+                    if (!parsebool(pval, &conf->flag_dollarid))
+                        goto err;
+                } else if (strcmp(p, "abspath") == 0) {
+                    if (!parsebool(pval, &conf->flag_abspath))
+                        goto err;
+                } else if (strcmp(p, "includedir") == 0) {
+                    if ((conf->includedir = OPENSSL_strdup(pval)) == NULL) {
+                        ERR_raise(ERR_LIB_CONF, ERR_R_MALLOC_FAILURE);
                         goto err;
                     }
                 }
+
                 /*
                  * We *ignore* any unknown pragma.
                  */
@@ -403,6 +440,9 @@ static int def_load_bio(CONF *conf, BIO *in, long *line)
                 BIO *next;
                 const char *include_dir = ossl_safe_getenv("OPENSSL_CONF_INCLUDE");
                 char *include_path = NULL;
+
+                if (include_dir == NULL)
+                    include_dir = conf->includedir;
 
                 if (*p == '=') {
                     p++;
@@ -429,6 +469,12 @@ static int def_load_bio(CONF *conf, BIO *in, long *line)
                     OPENSSL_free(include);
                 } else {
                     include_path = include;
+                }
+
+                if (conf->flag_abspath
+                        && !ossl_is_absolute_path(include_path)) {
+                    ERR_raise(ERR_LIB_CONF, CONF_R_RELATIVE_PATH);
+                    goto err;
                 }
 
                 /* get the BIO of the included file */
@@ -510,6 +556,7 @@ static int def_load_bio(CONF *conf, BIO *in, long *line)
      */
     sk_BIO_free(biosk);
     return 1;
+
  err:
     BUF_MEM_free(buff);
     OPENSSL_free(section);

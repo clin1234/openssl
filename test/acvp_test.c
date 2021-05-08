@@ -1,5 +1,5 @@
 /*
- * Copyright 2020 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2020-2021 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -97,7 +97,7 @@ static int sig_gen(EVP_PKEY *pkey, OSSL_PARAM *params, const char *digest_name,
     if (!TEST_ptr(sig = OPENSSL_malloc(sz))
         || !TEST_ptr(md_ctx = EVP_MD_CTX_new())
         || !TEST_int_eq(EVP_DigestSignInit_ex(md_ctx, NULL, digest_name, libctx,
-                                              NULL, pkey), 1)
+                                              NULL, pkey, NULL), 1)
         || !TEST_int_gt(EVP_DigestSign(md_ctx, sig, &sig_len, msg, msg_len), 0))
         goto err;
     *sig_out = sig;
@@ -127,7 +127,7 @@ static int ecdsa_keygen_test(int id)
         || !TEST_int_gt(EVP_PKEY_keygen_init(ctx), 0)
         || !TEST_true(EVP_PKEY_CTX_set_group_name(ctx, tst->curve_name))
         || !TEST_int_gt(EVP_PKEY_keygen(ctx, &pkey), 0)
-        || !TEST_int_eq(self_test_args.called, 3)
+        || !TEST_int_ge(self_test_args.called, 3)
         || !TEST_true(pkey_get_bn_bytes(pkey, OSSL_PKEY_PARAM_PRIV_KEY, &priv,
                                         &priv_len))
         || !TEST_true(pkey_get_bn_bytes(pkey, OSSL_PKEY_PARAM_EC_PUB_X, &pubx,
@@ -169,13 +169,14 @@ static int ecdsa_create_pkey(EVP_PKEY **pkey, const char *curve_name,
                                                        pub, pub_len) > 0)
         || !TEST_ptr(params = OSSL_PARAM_BLD_to_param(bld))
         || !TEST_ptr(ctx = EVP_PKEY_CTX_new_from_name(libctx, "EC", NULL))
-        || !TEST_true(EVP_PKEY_key_fromdata_init(ctx))
-        || !TEST_int_eq(EVP_PKEY_fromdata(ctx, pkey, params), expected))
+        || !TEST_true(EVP_PKEY_fromdata_init(ctx))
+        || !TEST_int_eq(EVP_PKEY_fromdata(ctx, pkey, EVP_PKEY_PUBLIC_KEY,
+                                          params), expected))
     goto err;
 
     ret = 1;
 err:
-    OSSL_PARAM_BLD_free_params(params);
+    OSSL_PARAM_free(params);
     OSSL_PARAM_BLD_free(bld);
     EVP_PKEY_CTX_free(ctx);
     return ret;
@@ -205,7 +206,7 @@ err:
     return ret;
 }
 
-/* Extract r and s  from a ecdsa signature */
+/* Extract r and s  from an ecdsa signature */
 static int get_ecdsa_sig_rs_bytes(const unsigned char *sig, size_t sig_len,
                                   unsigned char **r, unsigned char **s,
                                   size_t *rlen, size_t *slen)
@@ -305,7 +306,7 @@ static int ecdsa_sigver_test(int id)
     ret = TEST_int_gt((sig_len = i2d_ECDSA_SIG(sign, &sig)), 0)
           && TEST_ptr(md_ctx = EVP_MD_CTX_new())
           && TEST_true(EVP_DigestVerifyInit_ex(md_ctx, NULL, tst->digest_alg,
-                                               libctx, NULL, pkey)
+                                               libctx, NULL, pkey, NULL)
           && TEST_int_eq(EVP_DigestVerify(md_ctx, sig, sig_len,
                                           tst->msg, tst->msg_len), tst->pass));
 err:
@@ -510,13 +511,13 @@ static int dsa_create_pkey(EVP_PKEY **pkey,
      }
      if (!TEST_ptr(params = OSSL_PARAM_BLD_to_param(bld))
          || !TEST_ptr(ctx = EVP_PKEY_CTX_new_from_name(libctx, "DSA", NULL))
-         || !TEST_true(EVP_PKEY_key_fromdata_init(ctx))
-         || !TEST_true(EVP_PKEY_fromdata(ctx, pkey, params)))
+         || !TEST_true(EVP_PKEY_fromdata_init(ctx))
+         || !TEST_true(EVP_PKEY_fromdata(ctx, pkey, EVP_PKEY_PUBLIC_KEY, params)))
          goto err;
 
     ret = 1;
 err:
-    OSSL_PARAM_BLD_free_params(params);
+    OSSL_PARAM_free(params);
     OSSL_PARAM_BLD_free(bld);
     EVP_PKEY_CTX_free(ctx);
     return ret;
@@ -836,8 +837,9 @@ static int aes_gcm_enc_dec(const char *alg,
             goto err;
     }
     /*
-     * TODO(3.0): The IV should not be set outside the boundary as it is now.
-     * It needs to be fed in via a dummy entropy source for this test.
+     * For testing purposes the IV it being set here. In a compliant application
+     * the IV would be generated internally. A fake entropy source could also
+     * be used to feed in the random IV bytes (see fake_random.c)
      */
     if (!TEST_true(EVP_CipherInit_ex(ctx, NULL, NULL, key, iv, enc))
         || !TEST_true(EVP_CIPHER_CTX_set_padding(ctx, 0))
@@ -930,13 +932,14 @@ static int dh_create_pkey(EVP_PKEY **pkey, const char *group_name,
 
     if (!TEST_ptr(params = OSSL_PARAM_BLD_to_param(bld))
         || !TEST_ptr(ctx = EVP_PKEY_CTX_new_from_name(libctx, "DH", NULL))
-        || !TEST_true(EVP_PKEY_key_fromdata_init(ctx))
-        || !TEST_int_eq(EVP_PKEY_fromdata(ctx, pkey, params), pass))
+        || !TEST_true(EVP_PKEY_fromdata_init(ctx))
+        || !TEST_int_eq(EVP_PKEY_fromdata(ctx, pkey, EVP_PKEY_KEYPAIR, params),
+                        pass))
     goto err;
 
     ret = 1;
 err:
-    OSSL_PARAM_BLD_free_params(params);
+    OSSL_PARAM_free(params);
     OSSL_PARAM_BLD_free(bld);
     EVP_PKEY_CTX_free(ctx);
     return ret;
@@ -1053,13 +1056,13 @@ static int rsa_create_pkey(EVP_PKEY **pkey,
     }
     if (!TEST_ptr(params = OSSL_PARAM_BLD_to_param(bld))
         || !TEST_ptr(ctx = EVP_PKEY_CTX_new_from_name(libctx, "RSA", NULL))
-        || !TEST_true(EVP_PKEY_key_fromdata_init(ctx))
-        || !TEST_true(EVP_PKEY_fromdata(ctx, pkey, params)))
+        || !TEST_true(EVP_PKEY_fromdata_init(ctx))
+        || !TEST_true(EVP_PKEY_fromdata(ctx, pkey, EVP_PKEY_KEYPAIR, params)))
         goto err;
 
     ret = 1;
 err:
-    OSSL_PARAM_BLD_free_params(params);
+    OSSL_PARAM_free(params);
     OSSL_PARAM_BLD_free(bld);
     EVP_PKEY_CTX_free(ctx);
     return ret;
@@ -1167,7 +1170,7 @@ err:
     OPENSSL_free(d);
     EVP_PKEY_free(pkey);
     EVP_PKEY_CTX_free(ctx);
-    OSSL_PARAM_BLD_free_params(params);
+    OSSL_PARAM_free(params);
     OSSL_PARAM_BLD_free(bld);
     return ret;
 }
@@ -1247,7 +1250,7 @@ static int rsa_sigver_test(int id)
         || !TEST_ptr(md_ctx = EVP_MD_CTX_new())
         || !TEST_true(EVP_DigestVerifyInit_ex(md_ctx, &pkey_ctx,
                                               tst->digest_alg, libctx, NULL,
-                                              pkey)
+                                              pkey, NULL)
         || !TEST_true(EVP_PKEY_CTX_set_params(pkey_ctx, params))
         || !TEST_int_eq(EVP_DigestVerify(md_ctx, tst->sig, tst->sig_len,
                                          tst->msg, tst->msg_len), tst->pass)))
@@ -1348,7 +1351,7 @@ static int drbg_test(int id)
 
     params[0] = OSSL_PARAM_construct_uint(OSSL_RAND_PARAM_STRENGTH, &strength);
     params[1] = OSSL_PARAM_construct_end();
-    if (!TEST_true(EVP_RAND_set_ctx_params(parent, params)))
+    if (!TEST_true(EVP_RAND_CTX_set_params(parent, params)))
         goto err;
 
     /* Get the DRBG */
@@ -1362,7 +1365,7 @@ static int drbg_test(int id)
     params[1] = OSSL_PARAM_construct_utf8_string(OSSL_DRBG_PARAM_CIPHER,
                                                  (char *)tst->cipher, 0);
     params[2] = OSSL_PARAM_construct_end();
-    if (!TEST_true(EVP_RAND_set_ctx_params(ctx, params)))
+    if (!TEST_true(EVP_RAND_CTX_set_params(ctx, params)))
         goto err;
 
     /* Feed in the entropy and nonce */
@@ -1373,7 +1376,7 @@ static int drbg_test(int id)
                                                   (void *)tst->nonce,
                                                   tst->nonce_len);
     params[2] = OSSL_PARAM_construct_end();
-    if (!TEST_true(EVP_RAND_set_ctx_params(parent, params)))
+    if (!TEST_true(EVP_RAND_CTX_set_params(parent, params)))
         goto err;
 
     /*
@@ -1381,7 +1384,7 @@ static int drbg_test(int id)
      * A NULL personalisation string defaults to the built in so something
      * non-NULL is needed if there is no personalisation string
      */
-    if (!TEST_true(EVP_RAND_instantiate(ctx, 0, 0, (void *)"", 0))
+    if (!TEST_true(EVP_RAND_instantiate(ctx, 0, 0, (void *)"", 0, NULL))
         || !TEST_true(EVP_RAND_generate(ctx, returned_bits, returned_bits_len,
                                         0, 0, NULL, 0))
         || !TEST_true(EVP_RAND_generate(ctx, returned_bits, returned_bits_len,

@@ -1,5 +1,5 @@
 /*
- * Copyright 2007-2020 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2007-2021 The OpenSSL Project Authors. All Rights Reserved.
  * Copyright Nokia 2007-2019
  * Copyright Siemens AG 2015-2019
  *
@@ -12,7 +12,6 @@
 #include <openssl/trace.h>
 #include <openssl/bio.h>
 #include <openssl/ocsp.h> /* for OCSP_REVOKED_STATUS_* */
-#include "crypto/x509.h" /* for x509v3_cache_extensions() */
 
 #include "cmp_local.h"
 
@@ -65,15 +64,14 @@ STACK_OF(X509) *OSSL_CMP_CTX_get0_untrusted(const OSSL_CMP_CTX *ctx)
  */
 int OSSL_CMP_CTX_set1_untrusted(OSSL_CMP_CTX *ctx, STACK_OF(X509) *certs)
 {
-    STACK_OF(X509) *untrusted;
+    STACK_OF(X509) *untrusted = NULL;
+
     if (ctx == NULL) {
         ERR_raise(ERR_LIB_CMP, CMP_R_NULL_ARGUMENT);
         return 0;
     }
-    if ((untrusted = sk_X509_new_null()) == NULL)
-        return 0;
-    if (X509_add_certs(untrusted, certs,
-                       X509_ADD_FLAG_UP_REF | X509_ADD_FLAG_NO_DUP) != 1)
+    if (!ossl_x509_add_certs_new(&untrusted, certs,
+                                 X509_ADD_FLAG_UP_REF | X509_ADD_FLAG_NO_DUP))
         goto err;
     sk_X509_pop_free(ctx->untrusted, X509_free);
     ctx->untrusted = untrusted;
@@ -110,7 +108,7 @@ OSSL_CMP_CTX *OSSL_CMP_CTX_new(OSSL_LIB_CTX *libctx, const char *propq)
 
     ctx->libctx = libctx;
     if (propq != NULL && (ctx->propq = OPENSSL_strdup(propq)) == NULL)
-        goto err;
+        goto oom;
 
     ctx->log_verbosity = OSSL_CMP_LOG_INFO;
 
@@ -120,7 +118,7 @@ OSSL_CMP_CTX *OSSL_CMP_CTX_new(OSSL_LIB_CTX *libctx, const char *propq)
     ctx->msg_timeout = 2 * 60;
 
     if ((ctx->untrusted = sk_X509_new_null()) == NULL)
-        goto err;
+        goto oom;
 
     ctx->pbm_slen = 16;
     if (!cmp_ctx_set_md(ctx, &ctx->pbm_owf, NID_sha256))
@@ -136,9 +134,10 @@ OSSL_CMP_CTX *OSSL_CMP_CTX_new(OSSL_LIB_CTX *libctx, const char *propq)
     /* all other elements are initialized to 0 or NULL, respectively */
     return ctx;
 
+ oom:
+    ERR_raise(ERR_LIB_X509, ERR_R_MALLOC_FAILURE);
  err:
     OSSL_CMP_CTX_free(ctx);
-    ERR_raise(ERR_LIB_X509, ERR_R_MALLOC_FAILURE);
     return NULL;
 }
 
@@ -462,8 +461,6 @@ STACK_OF(X509) *OSSL_CMP_CTX_get1_newChain(const OSSL_CMP_CTX *ctx)
         ERR_raise(ERR_LIB_CMP, CMP_R_NULL_ARGUMENT);
         return NULL;
     }
-    if (ctx->newChain == NULL)
-        return sk_X509_new_null();
     return X509_chain_up_ref(ctx->newChain);
 }
 
@@ -477,10 +474,9 @@ int ossl_cmp_ctx_set1_newChain(OSSL_CMP_CTX *ctx, STACK_OF(X509) *newChain)
         return 0;
 
     sk_X509_pop_free(ctx->newChain, X509_free);
-    ctx->newChain= NULL;
-    if (newChain == NULL)
-        return 1;
-    return (ctx->newChain = X509_chain_up_ref(newChain)) != NULL;
+    ctx->newChain = NULL;
+    return newChain == NULL ||
+        (ctx->newChain = X509_chain_up_ref(newChain)) != NULL;
 }
 
 /* Returns the stack of extraCerts received in CertRepMessage, NULL on error */
@@ -490,8 +486,6 @@ STACK_OF(X509) *OSSL_CMP_CTX_get1_extraCertsIn(const OSSL_CMP_CTX *ctx)
         ERR_raise(ERR_LIB_CMP, CMP_R_NULL_ARGUMENT);
         return NULL;
     }
-    if (ctx->extraCertsIn == NULL)
-        return sk_X509_new_null();
     return X509_chain_up_ref(ctx->extraCertsIn);
 }
 
@@ -507,9 +501,8 @@ int ossl_cmp_ctx_set1_extraCertsIn(OSSL_CMP_CTX *ctx,
 
     sk_X509_pop_free(ctx->extraCertsIn, X509_free);
     ctx->extraCertsIn = NULL;
-    if (extraCertsIn == NULL)
-        return 1;
-    return (ctx->extraCertsIn = X509_chain_up_ref(extraCertsIn)) != NULL;
+    return extraCertsIn == NULL
+        || (ctx->extraCertsIn = X509_chain_up_ref(extraCertsIn)) != NULL;
 }
 
 /*
@@ -526,9 +519,8 @@ int OSSL_CMP_CTX_set1_extraCertsOut(OSSL_CMP_CTX *ctx,
 
     sk_X509_pop_free(ctx->extraCertsOut, X509_free);
     ctx->extraCertsOut = NULL;
-    if (extraCertsOut == NULL)
-        return 1;
-    return (ctx->extraCertsOut = X509_chain_up_ref(extraCertsOut)) != NULL;
+    return extraCertsOut == NULL
+        || (ctx->extraCertsOut = X509_chain_up_ref(extraCertsOut)) != NULL;
 }
 
 /*
@@ -580,8 +572,6 @@ STACK_OF(X509) *OSSL_CMP_CTX_get1_caPubs(const OSSL_CMP_CTX *ctx)
         ERR_raise(ERR_LIB_CMP, CMP_R_NULL_ARGUMENT);
         return NULL;
     }
-    if (ctx->caPubs == NULL)
-        return sk_X509_new_null();
     return X509_chain_up_ref(ctx->caPubs);
 }
 
@@ -596,9 +586,7 @@ int ossl_cmp_ctx_set1_caPubs(OSSL_CMP_CTX *ctx, STACK_OF(X509) *caPubs)
 
     sk_X509_pop_free(ctx->caPubs, X509_free);
     ctx->caPubs = NULL;
-    if (caPubs == NULL)
-        return 1;
-    return (ctx->caPubs = X509_chain_up_ref(caPubs)) != NULL;
+    return caPubs == NULL || (ctx->caPubs = X509_chain_up_ref(caPubs)) != NULL;
 }
 
 #define char_dup OPENSSL_strdup
@@ -620,7 +608,7 @@ int OSSL_CMP_CTX_set1_##FIELD(OSSL_CMP_CTX *ctx, const TYPE *val) \
     return 1; \
 }
 
-#define X509_invalid(cert) (!x509v3_cache_extensions(cert))
+#define X509_invalid(cert) (!ossl_x509v3_cache_extensions(cert))
 #define EVP_PKEY_invalid(key) 0
 #define DEFINE_OSSL_CMP_CTX_set1_up_ref(FIELD, TYPE) \
 int OSSL_CMP_CTX_set1_##FIELD(OSSL_CMP_CTX *ctx, TYPE *val) \
@@ -742,15 +730,13 @@ int OSSL_CMP_CTX_build_cert_chain(OSSL_CMP_CTX *ctx, X509_STORE *own_trusted,
         return 0;
     }
 
-    if (ctx->untrusted != NULL ?
-        !X509_add_certs(ctx->untrusted, candidates,
-                        X509_ADD_FLAG_UP_REF | X509_ADD_FLAG_NO_DUP) :
-        !OSSL_CMP_CTX_set1_untrusted(ctx, candidates))
+    if (!ossl_x509_add_certs_new(&ctx->untrusted, candidates,
+                                 X509_ADD_FLAG_UP_REF | X509_ADD_FLAG_NO_DUP))
         return 0;
 
     ossl_cmp_debug(ctx, "trying to build chain for own CMP signer cert");
-    chain = ossl_cmp_build_cert_chain(ctx->libctx, ctx->propq, own_trusted,
-                                      ctx->untrusted, ctx->cert);
+    chain = X509_build_chain(ctx->cert, ctx->untrusted, own_trusted, 0,
+                             ctx->libctx, ctx->propq);
     if (chain == NULL) {
         ERR_raise(ERR_LIB_CMP, CMP_R_FAILED_BUILDING_OWN_CHAIN);
         return 0;

@@ -1,5 +1,5 @@
 /*
- * Copyright 1995-2020 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 1995-2021 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -46,9 +46,10 @@
 # define _UC(c) ((unsigned char)(c))
 
 void app_RAND_load_conf(CONF *c, const char *section);
-void app_RAND_write(void);
+int app_RAND_write(void);
+int app_RAND_load(void);
 
-extern char *default_config_file;
+extern char *default_config_file; /* may be "" */
 extern BIO *bio_in;
 extern BIO *bio_out;
 extern BIO *bio_err;
@@ -63,8 +64,10 @@ BIO *bio_open_owner(const char *filename, int format, int private);
 BIO *bio_open_default(const char *filename, char mode, int format);
 BIO *bio_open_default_quiet(const char *filename, char mode, int format);
 CONF *app_load_config_bio(BIO *in, const char *filename);
-CONF *app_load_config(const char *filename);
-CONF *app_load_config_quiet(const char *filename);
+#define app_load_config(filename) app_load_config_internal(filename, 0)
+#define app_load_config_quiet(filename) app_load_config_internal(filename, 1)
+CONF *app_load_config_internal(const char *filename, int quiet);
+CONF *app_load_config_verbose(const char *filename, int verbose);
 int app_load_modules(const CONF *config);
 CONF *app_load_config_modules(const char *configfile);
 void unbuffer(FILE *fp);
@@ -91,8 +94,7 @@ int wrap_password_callback(char *buf, int bufsiz, int verify, void *cb_data);
 
 int chopup_args(ARGS *arg, char *buf);
 int dump_cert_text(BIO *out, X509 *x);
-void print_name(BIO *out, const char *title, const X509_NAME *nm,
-                unsigned long lflags);
+void print_name(BIO *out, const char *title, const X509_NAME *nm);
 void print_bignum_var(BIO *, const BIGNUM *, const char*,
                       int, unsigned char *);
 void print_array(BIO *, const char *, int, const unsigned char *);
@@ -106,29 +108,39 @@ char *get_passwd(const char *pass, const char *desc);
 int app_passwd(const char *arg1, const char *arg2, char **pass1, char **pass2);
 int add_oid_section(CONF *conf);
 X509_REQ *load_csr(const char *file, int format, const char *desc);
-X509 *load_cert_pass(const char *uri, int maybe_stdin,
+X509 *load_cert_pass(const char *uri, int format, int maybe_stdin,
                      const char *pass, const char *desc);
-#define load_cert(uri, desc) load_cert_pass(uri, 1, NULL, desc)
-X509_CRL *load_crl(const char *uri, const char *desc);
+#define load_cert(uri, format, desc) load_cert_pass(uri, format, 1, NULL, desc)
+X509_CRL *load_crl(const char *uri, int format, int maybe_stdin,
+                   const char *desc);
 void cleanse(char *str);
 void clear_free(char *str);
 EVP_PKEY *load_key(const char *uri, int format, int maybe_stdin,
                    const char *pass, ENGINE *e, const char *desc);
 EVP_PKEY *load_pubkey(const char *uri, int format, int maybe_stdin,
                       const char *pass, ENGINE *e, const char *desc);
-EVP_PKEY *load_keyparams(const char *uri, int maybe_stdin, const char *keytype,
-                         const char *desc);
-int load_certs(const char *uri, STACK_OF(X509) **certs,
+EVP_PKEY *load_keyparams(const char *uri, int format, int maybe_stdin,
+                         const char *keytype, const char *desc);
+char *next_item(char *opt); /* in list separated by comma and/or space */
+int load_cert_certs(const char *uri,
+                    X509 **pcert, STACK_OF(X509) **pcerts,
+                    int exclude_http, const char *pass, const char *desc,
+                    X509_VERIFY_PARAM *vpm);
+STACK_OF(X509) *load_certs_multifile(char *files, const char *pass,
+                                     const char *desc, X509_VERIFY_PARAM *vpm);
+X509_STORE *load_certstore(char *input, const char *pass, const char *desc,
+                           X509_VERIFY_PARAM *vpm);
+int load_certs(const char *uri, int maybe_stdin, STACK_OF(X509) **certs,
                const char *pass, const char *desc);
 int load_crls(const char *uri, STACK_OF(X509_CRL) **crls,
               const char *pass, const char *desc);
-int load_key_certs_crls(const char *uri, int maybe_stdin,
+int load_key_certs_crls(const char *uri, int format, int maybe_stdin,
                         const char *pass, const char *desc,
                         EVP_PKEY **ppkey, EVP_PKEY **ppubkey,
                         EVP_PKEY **pparams,
                         X509 **pcert, STACK_OF(X509) **pcerts,
                         X509_CRL **pcrl, STACK_OF(X509_CRL) **pcrls);
-int load_key_cert_crl(const char *uri, int maybe_stdin,
+int load_key_cert_crl(const char *uri, int format, int maybe_stdin,
                       const char *pass, const char *desc,
                       EVP_PKEY **ppkey, EVP_PKEY **ppubkey,
                       X509 **pcert, X509_CRL **pcrl);
@@ -201,7 +213,7 @@ typedef struct ca_db_st {
 } CA_DB;
 
 void app_bail_out(char *fmt, ...);
-void* app_malloc(int sz, const char *what);
+void *app_malloc(size_t sz, const char *what);
 BIGNUM *load_serial(const char *serialfile, int create, ASN1_INTEGER **retai);
 int save_serial(const char *serialfile, const char *suffix, const BIGNUM *serial,
                 ASN1_INTEGER **retai);
@@ -230,14 +242,14 @@ int x509_req_ctrl_string(X509_REQ *x, const char *value);
 int init_gen_str(EVP_PKEY_CTX **pctx,
                  const char *algname, ENGINE *e, int do_param,
                  OSSL_LIB_CTX *libctx, const char *propq);
-int do_X509_sign(X509 *x, EVP_PKEY *pkey, const EVP_MD *md,
-                 STACK_OF(OPENSSL_STRING) *sigopts);
+int do_X509_sign(X509 *x, EVP_PKEY *pkey, const char *md,
+                 STACK_OF(OPENSSL_STRING) *sigopts, X509V3_CTX *ext_ctx);
 int do_X509_verify(X509 *x, EVP_PKEY *pkey, STACK_OF(OPENSSL_STRING) *vfyopts);
-int do_X509_REQ_sign(X509_REQ *x, EVP_PKEY *pkey, const EVP_MD *md,
+int do_X509_REQ_sign(X509_REQ *x, EVP_PKEY *pkey, const char *md,
                      STACK_OF(OPENSSL_STRING) *sigopts);
 int do_X509_REQ_verify(X509_REQ *x, EVP_PKEY *pkey,
                        STACK_OF(OPENSSL_STRING) *vfyopts);
-int do_X509_CRL_sign(X509_CRL *x, EVP_PKEY *pkey, const EVP_MD *md,
+int do_X509_CRL_sign(X509_CRL *x, EVP_PKEY *pkey, const char *md,
                      STACK_OF(OPENSSL_STRING) *sigopts);
 
 extern char *psk_key;
@@ -260,6 +272,7 @@ typedef struct app_http_tls_info_st {
 } APP_HTTP_TLS_INFO;
 BIO *app_http_tls_cb(BIO *hbio, /* APP_HTTP_TLS_INFO */ void *arg,
                      int connect, int detail);
+void APP_HTTP_TLS_INFO_free(APP_HTTP_TLS_INFO *info);
 # ifndef OPENSSL_NO_SOCK
 ASN1_VALUE *app_http_get_asn1(const char *url, const char *proxy,
                               const char *no_proxy, SSL_CTX *ssl_ctx,
@@ -321,6 +334,7 @@ int app_provider_load(OSSL_LIB_CTX *libctx, const char *provider_name);
 void app_providers_cleanup(void);
 
 OSSL_LIB_CTX *app_get0_libctx(void);
+int app_set_propq(const char *arg);
 const char *app_get0_propq(void);
 
 #endif

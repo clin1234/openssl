@@ -1,5 +1,5 @@
 /*
- * Copyright 1995-2020 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 1995-2021 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
@@ -34,7 +34,7 @@ static EVP_PKEY *dsa_to_dh(EVP_PKEY *dh);
 static int gendh_cb(EVP_PKEY_CTX *ctx);
 
 typedef enum OPTION_choice {
-    OPT_ERR = -1, OPT_EOF = 0, OPT_HELP,
+    OPT_COMMON,
     OPT_INFORM, OPT_OUTFORM, OPT_IN, OPT_OUT,
     OPT_ENGINE, OPT_CHECK, OPT_TEXT, OPT_NOOUT,
     OPT_DSAPARAM, OPT_2, OPT_3, OPT_5,
@@ -158,7 +158,8 @@ int dhparam_main(int argc, char **argv)
     } else if (argc != 0) {
         goto opthelp;
     }
-
+    if (!app_RAND_load())
+        goto end;
 
     if (g && !num)
         num = DEFBITS;
@@ -253,14 +254,14 @@ int dhparam_main(int argc, char **argv)
             * We check that we got one of those key types afterwards.
             */
             decoderctx
-                = OSSL_DECODER_CTX_new_by_EVP_PKEY(&tmppkey,
-                                                    (informat == FORMAT_ASN1)
+                = OSSL_DECODER_CTX_new_for_pkey(&tmppkey,
+                                                (informat == FORMAT_ASN1)
                                                     ? "DER" : "PEM",
-                                                    NULL,
-                                                    (informat == FORMAT_ASN1)
+                                                NULL,
+                                                (informat == FORMAT_ASN1)
                                                     ? keytype : NULL,
-                                                    OSSL_KEYMGMT_SELECT_DOMAIN_PARAMETERS,
-                                                    NULL, NULL);
+                                                OSSL_KEYMGMT_SELECT_DOMAIN_PARAMETERS,
+                                                NULL, NULL);
 
             if (decoderctx != NULL
                     && !OSSL_DECODER_from_bio(decoderctx, in)
@@ -327,11 +328,11 @@ int dhparam_main(int argc, char **argv)
 
     if (!noout) {
         OSSL_ENCODER_CTX *ectx =
-            OSSL_ENCODER_CTX_new_by_EVP_PKEY(pkey,
-                                             OSSL_KEYMGMT_SELECT_DOMAIN_PARAMETERS,
-                                             outformat == FORMAT_ASN1
-                                             ? "DER" : "PEM",
-                                             NULL, NULL);
+            OSSL_ENCODER_CTX_new_for_pkey(pkey,
+                                          OSSL_KEYMGMT_SELECT_DOMAIN_PARAMETERS,
+                                          outformat == FORMAT_ASN1
+                                              ? "DER" : "PEM",
+                                          NULL, NULL);
 
         if (ectx == NULL || !OSSL_ENCODER_to_bio(ectx, out)) {
             OSSL_ENCODER_CTX_free(ectx);
@@ -387,15 +388,15 @@ static EVP_PKEY *dsa_to_dh(EVP_PKEY *dh)
 
     ctx = EVP_PKEY_CTX_new_from_name(NULL, "DHX", NULL);
     if (ctx == NULL
-            || !EVP_PKEY_param_fromdata_init(ctx)
-            || !EVP_PKEY_fromdata(ctx, &pkey, params)) {
+            || !EVP_PKEY_fromdata_init(ctx)
+            || !EVP_PKEY_fromdata(ctx, &pkey, EVP_PKEY_KEY_PARAMETERS, params)) {
         BIO_printf(bio_err, "Error, failed to set DH parameters\n");
         goto err;
     }
 
  err:
     EVP_PKEY_CTX_free(ctx);
-    OSSL_PARAM_BLD_free_params(params);
+    OSSL_PARAM_free(params);
     OSSL_PARAM_BLD_free(tmpl);
     BN_free(bn_p);
     BN_free(bn_q);
