@@ -358,18 +358,20 @@ OpenSSL 3.0
  * Deprecated the type OCSP_REQ_CTX and the functions OCSP_REQ_CTX_new(),
    OCSP_REQ_CTX_free(), OCSP_REQ_CTX_http(), OCSP_REQ_CTX_add1_header(),
    OCSP_REQ_CTX_i2d() and its special form OCSP_REQ_CTX_set1_req(),
-   OCSP_REQ_CTX_nbio(), OCSP_REQ_CTX_nbio_d2i(),
+   OCSP_REQ_CTX_nbio(),
+   OCSP_REQ_CTX_nbio_d2i() and its special form OCSP_sendreq_nbio(),
    OCSP_REQ_CTX_get0_mem_bio() and OCSP_set_max_response_length().  These
    were used to collect all necessary data to form a HTTP request, and to
    perform the HTTP transfer with that request.  With OpenSSL 3.0, the
    type is OSSL_HTTP_REQ_CTX, and the deprecated functions are replaced
    with OSSL_HTTP_REQ_CTX_new(), OSSL_HTTP_REQ_CTX_free(),
    OSSL_HTTP_REQ_CTX_set_request_line(), OSSL_HTTP_REQ_CTX_add1_header(),
-   OSSL_HTTP_REQ_CTX_i2d(), OSSL_HTTP_REQ_CTX_nbio(),
-   OSSL_HTTP_REQ_CTX_sendreq_d2i(), OSSL_HTTP_REQ_CTX_get0_mem_bio() and
+   OSSL_HTTP_REQ_CTX_set1_req(),
+   OSSL_HTTP_REQ_CTX_nbio(), OSSL_HTTP_REQ_CTX_nbio_d2i(),
+   OSSL_HTTP_REQ_CTX_get0_mem_bio(), and
    OSSL_HTTP_REQ_CTX_set_max_response_length().
 
-   *Rich Salz and Richard Levitte*
+   *Rich Salz, Richard Levitte, and David von Oheimb*
 
  * Deprecated `X509_http_nbio()` and `X509_CRL_http_nbio()`,
    which are superseded by `X509_load_http()` and `X509_CRL_load_http()`.
@@ -405,6 +407,12 @@ OpenSSL 3.0
 
    *Dmitry Belyavskiy*
 
+ * Added convenience functions for generating asymmetric key pairs:
+   The 'quick' one-shot (yet somewhat limited) function L<EVP_PKEY_Q_keygen(3)>
+   and macros for the most common cases: <EVP_RSA_gen(3)> and L<EVP_EC_gen(3)>.
+
+   *David von Oheimb*
+
  * All of the low-level EC_KEY functions have been deprecated including:
 
    EC_KEY_OpenSSL, EC_KEY_get_default_method, EC_KEY_set_default_method,
@@ -429,7 +437,8 @@ OpenSSL 3.0
    Applications that need to implement an EC_KEY_METHOD need to consider
    implementation of the functionality in a special provider.
    For replacement of the functions manipulating the EC_KEY objects
-   see the EVP_PKEY-EC(7) manual page.
+   see the L<EVP_PKEY-EC(7)> manual page.
+   A simple way of generating EC keys is L<EVP_EC_gen(3)>.
 
    Additionally functions that read and write EC_KEY objects such as
    o2i_ECPublicKey, i2o_ECPublicKey, ECParameters_print_fp, EC_KEY_print_fp,
@@ -805,8 +814,12 @@ OpenSSL 3.0
    *David von Oheimb, Martin Peylo*
 
  * Generalized the HTTP client code from `crypto/ocsp/` into `crpyto/http/`.
-   The legacy OCSP-focused and only partly documented API is retained for
-   backward compatibility. See L<OSSL_CMP_MSG_http_perform(3)> etc. for details.
+   It supports arbitrary request and response content types, GET redirection,
+   TLS, connections via HTTP(S) proxies, connections and exchange via
+   user-defined BIOs (allowing implicit connections), persistent connections,
+   and timeout checks.  See L<OSSL_HTTP_transfer(3)> etc. for details.
+   The legacy OCSP-focused (and only partly documented) API
+   is retained for backward compatibility, while most of it is deprecated.
 
    *David von Oheimb*
 
@@ -825,7 +838,7 @@ OpenSSL 3.0
 
  * All of the low-level RSA functions have been deprecated including:
 
-   RSA_new_method, RSA_size, RSA_security_bits, RSA_get0_pss_params,
+   RSA_new, RSA_new_method, RSA_size, RSA_security_bits, RSA_get0_pss_params,
    RSA_get_version, RSA_get0_engine, RSA_generate_key_ex,
    RSA_generate_multi_prime_key, RSA_X931_derive_ex, RSA_X931_generate_key_ex,
    RSA_check_key, RSA_check_key_ex, RSA_public_encrypt, RSA_private_encrypt,
@@ -858,6 +871,9 @@ OpenSSL 3.0
    time.  Instead applications should use L<EVP_PKEY_encrypt_init(3)>,
    L<EVP_PKEY_encrypt(3)>, L<EVP_PKEY_decrypt_init(3)> and
    L<EVP_PKEY_decrypt(3)>.
+   For replacement of the functions manipulating the RSA objects
+   see the L<EVP_PKEY-RSA(7)> manual page.
+   A simple way of generating RSA keys is L<EVP_RSA_gen(3)>.
 
    All of these low-level RSA functions have been deprecated without
    replacement:
