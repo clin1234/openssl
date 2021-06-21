@@ -33,6 +33,7 @@ if (disabled("rsa")) {
 
 # Check for duplicate -addext parameters, and one "working" case.
 my @addext_args = ( "openssl", "req", "-new", "-out", "testreq.pem",
+                    "-key",  srctop_file("test", "certs", "ee-key.pem"),
     "-config", srctop_file("test", "test.cnf"), @req_new );
 my $val = "subjectAltName=DNS:example.com";
 my $val2 = " " . $val;
@@ -113,7 +114,7 @@ subtest "generating certificate requests with RSA" => sub {
                     "-config", srctop_file("test", "test.cnf"),
                     "-new", "-out", "testreq_withattrs_der.pem", "-utf8",
                     "-key", srctop_file("test", "testrsa_withattrs.der"),
-	            "-keyform", "DER"])),
+                    "-keyform", "DER"])),
            "Generating request from a key with extra attributes - PEM");
 
         ok(run(app(["openssl", "req",
@@ -288,6 +289,7 @@ subtest "generating certificate requests" => sub {
     plan tests => 2;
 
     ok(run(app(["openssl", "req", "-config", srctop_file("test", "test.cnf"),
+                "-key", srctop_file("test", "certs", "ee-key.pem"),
                 @req_new, "-out", "testreq.pem"])),
        "Generating request");
 
@@ -371,7 +373,7 @@ sub generate_cert {
     my $cn = $is_ca ? "CA" : "EE";
     my $ca_key = srctop_file(@certs, "ca-key.pem");
     my $key = $is_ca ? $ca_key : srctop_file(@certs, "ee-key.pem");
-    my @cmd = ("openssl", "req", "-config", "\"\"", "-x509",
+    my @cmd = ("openssl", "req", "-config", "", "-x509",
                "-key", $key, "-subj", "/CN=$cn", @_, "-out", $cert);
     push(@cmd, ("-CA", $ca_cert, "-CAkey", $ca_key)) unless $ss;
     ok(run(app([@cmd])), "generate $cert");

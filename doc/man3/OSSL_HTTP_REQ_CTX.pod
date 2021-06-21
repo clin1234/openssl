@@ -64,7 +64,7 @@ which gets populated with the B<BIO> to write/send the request to (I<wbio>),
 the B<BIO> to read/receive the response from (I<rbio>, which may be equal to
 I<wbio>), and the maximum expected response header line length I<buf_size>.
 A value <= 0 indicates that
-the B<HTTP_DEFAULT_MAX_LINE_LENGTH> of 4KiB should be used.
+the B<OSSL_HTTP_DEFAULT_MAX_LINE_LEN> of 4KiB should be used.
 I<buf_size> is also used as the number of content bytes that are read at a time.
 The allocated context structure is also populated with an internal allocated
 memory B<BIO>, which collects the HTTP request and additional headers as text.
@@ -111,12 +111,16 @@ If the value is 1 or 2 then a persistent connection is requested.
 If the value is 2 then a persistent connection is required,
 i.e., an error occurs in case the server does not grant it.
 
-OSSL_HTTP_REQ_CTX_set1_req() is to be used if and only if the I<method_POST>
-parameter in the OSSL_HTTP_REQ_CTX_set_request_line() call was 1
-and an ASN.1-encoded request should be sent, which does not support streaming.
-It finalizes the HTTP request context by adding the DER encoding of I<req>,
-using the ASN.1 template I<it> to do the encoding.
+OSSL_HTTP_REQ_CTX_set1_req() finalizes the HTTP request context.
+It is needed if the I<method_POST> parameter in the
+OSSL_HTTP_REQ_CTX_set_request_line() call was 1
+and an ASN.1-encoded request should be sent.
+It must also be used when requesting "keep-alive",
+even if a GET request is going to be sent, in which case I<req> must be NULL.
+Unless I<req> is NULL, the function adds the DER encoding of I<req> using
+the ASN.1 template I<it> to do the encoding (which does not support streaming).
 The HTTP header C<Content-Length> is filled out with the length of the request.
+I<content_type> must be NULL if I<req> is NULL.
 If I<content_type> isn't NULL,
 the HTTP header C<Content-Type> is also added with the given string value.
 All of this ends up in the internal memory B<BIO>.
@@ -154,7 +158,7 @@ in I<rctx> if provided by the server as <Content-Length> header field, else 0.
 
 OSSL_HTTP_REQ_CTX_set_max_response_length() sets the maximum allowed
 response content length for I<rctx> to I<len>. If not set or I<len> is 0
-then the B<HTTP_DEFAULT_MAX_RESP_LEN> is used, which currently is 100 KiB.
+then the B<OSSL_HTTP_DEFAULT_MAX_RESP_LEN> is used, which currently is 100 KiB.
 If the C<Content-Length> header is present and exceeds this value or
 the content is an ASN.1 encoded structure with a length exceeding this value
 or both length indications are present but disagree then an error occurs.
@@ -188,7 +192,7 @@ Then, the HTTP request must be prepared with request data:
 
 =item 1.
 
-Calling OSSL_HTTP_REQ_CTX_set_request_line().  This must be done exactly once.
+Calling OSSL_HTTP_REQ_CTX_set_request_line().
 
 =item 2.
 
@@ -197,9 +201,8 @@ This is optional and may be done multiple times with different names.
 
 =item 3.
 
-Add C<POST> data with OSSL_HTTP_REQ_CTX_set1_req().  This may only be done if
-I<method_POST> was 1 in the OSSL_HTTP_REQ_CTX_set_request_line() call,
-and must be done exactly once in that case.
+Finalize the request using OSSL_HTTP_REQ_CTX_set1_req().
+This may be omitted if the GET method is used and "keep-alive" is not requested.
 
 =back
 
@@ -222,7 +225,7 @@ OSSL_HTTP_REQ_CTX_nbio() and OSSL_HTTP_REQ_CTX_nbio_d2i()
 return 1 for success, 0 on error or redirection, -1 if retry is needed.
 
 OSSL_HTTP_REQ_CTX_exchange() and OSSL_HTTP_REQ_CTX_get0_mem_bio()
-returns a pointer to a B<BIO> on success and NULL on failure.
+return a pointer to a B<BIO> on success and NULL on failure.
 
 OSSL_HTTP_REQ_CTX_get_resp_len() returns the size of the response contents
 or 0 if not available or an error occurred.

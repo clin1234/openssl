@@ -33,8 +33,6 @@ B<openssl> B<ec>
 [B<-check>]
 {- $OpenSSL::safe::opt_engine_synopsis -}{- $OpenSSL::safe::opt_provider_synopsis -}
 
-=for openssl ifdef engine
-
 =head1 DESCRIPTION
 
 The L<openssl-ec(1)> command processes EC keys. They can be converted between
@@ -101,6 +99,10 @@ Prints out the public, private key components and parameters.
 =item B<-noout>
 
 This option prevents output of the encoded version of the key.
+
+=item B<-param_out>
+
+Print the elliptic curve parameters.
 
 =item B<-pubin>
 

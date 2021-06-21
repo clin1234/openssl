@@ -46,7 +46,8 @@ DEFINE_STACK_OF(INFOPAIR)
 typedef struct {
     OSSL_PROVIDER *prov;
     int (*create_cb)(const OSSL_CORE_HANDLE *provider, void *cbdata);
-    void (*remove_cb)(const OSSL_CORE_HANDLE *provider, void *cbdata);
+    int (*remove_cb)(const OSSL_CORE_HANDLE *provider, void *cbdata);
+    int (*global_props_cb)(const char *props, void *cbdata);
     void *cbdata;
 } OSSL_PROVIDER_CHILD_CB;
 DEFINE_STACK_OF(OSSL_PROVIDER_CHILD_CB)
@@ -276,9 +277,6 @@ OSSL_PROVIDER *ossl_provider_find(OSSL_LIB_CTX *libctx, const char *name,
         if (!noconfig) {
             if (ossl_lib_ctx_is_default(libctx))
                 OPENSSL_init_crypto(OPENSSL_INIT_LOAD_CONFIG, NULL);
-            if (ossl_lib_ctx_is_child(libctx)
-                    && !ossl_provider_init_child_providers(libctx))
-                return NULL;
         }
 #endif
 
@@ -309,7 +307,6 @@ static OSSL_PROVIDER *provider_new(const char *name,
 #ifndef HAVE_ATOMICS
         || (prov->refcnt_lock = CRYPTO_THREAD_lock_new()) == NULL
 #endif
-        || !ossl_provider_up_ref(prov) /* +1 One reference to be returned */
         || (prov->opbits_lock = CRYPTO_THREAD_lock_new()) == NULL
         || (prov->flag_lock = CRYPTO_THREAD_lock_new()) == NULL
         || (prov->name = OPENSSL_strdup(name)) == NULL) {
@@ -318,6 +315,7 @@ static OSSL_PROVIDER *provider_new(const char *name,
         return NULL;
     }
 
+    prov->refcnt = 1; /* 1 One reference to be returned */
     prov->init_function = init_function;
 #ifndef FIPS_MODULE
     prov->flag_couldbechild = 1;
@@ -485,6 +483,7 @@ void ossl_provider_free(OSSL_PROVIDER *prov)
 int ossl_provider_set_module_path(OSSL_PROVIDER *prov, const char *module_path)
 {
     OPENSSL_free(prov->path);
+    prov->path = NULL;
     if (module_path == NULL)
         return 1;
     if ((prov->path = OPENSSL_strdup(module_path)) != NULL)
@@ -982,8 +981,6 @@ static void provider_activate_fallbacks(struct provider_store_st *store)
     /*
      * We assume that all fallbacks have been added to the store before
      * any fallback is activated.
-     * TODO: We may have to reconsider this, IF we find ourselves adding
-     * fallbacks after any previous fallback has been activated.
      */
     if (activated_fallback_count > 0)
         store->use_fallbacks = 0;
@@ -1007,9 +1004,6 @@ int ossl_provider_doall_activated(OSSL_LIB_CTX *ctx,
      */
     if (ossl_lib_ctx_is_default(ctx))
         OPENSSL_init_crypto(OPENSSL_INIT_LOAD_CONFIG, NULL);
-    if (ossl_lib_ctx_is_child(ctx)
-            && !ossl_provider_init_child_providers(ctx))
-        return 0;
 #endif
 
     if (store == NULL)
@@ -1369,12 +1363,39 @@ int ossl_provider_convert_to_child(OSSL_PROVIDER *prov,
     return 1;
 }
 
+int ossl_provider_default_props_update(OSSL_LIB_CTX *libctx, const char *props)
+{
+#ifndef FIPS_MODULE
+    struct provider_store_st *store = NULL;
+    int i, max;
+    OSSL_PROVIDER_CHILD_CB *child_cb;
+
+    if ((store = get_provider_store(libctx)) == NULL)
+        return 0;
+
+    if (!CRYPTO_THREAD_read_lock(store->lock))
+        return 0;
+
+    max = sk_OSSL_PROVIDER_CHILD_CB_num(store->child_cbs);
+    for (i = 0; i < max; i++) {
+        child_cb = sk_OSSL_PROVIDER_CHILD_CB_value(store->child_cbs, i);
+        child_cb->global_props_cb(props, child_cb->cbdata);
+    }
+
+    CRYPTO_THREAD_unlock(store->lock);
+#endif
+    return 1;
+}
+
 static int ossl_provider_register_child_cb(const OSSL_CORE_HANDLE *handle,
                                            int (*create_cb)(
                                                const OSSL_CORE_HANDLE *provider,
                                                void *cbdata),
-                                           void (*remove_cb)(
+                                           int (*remove_cb)(
                                                const OSSL_CORE_HANDLE *provider,
+                                               void *cbdata),
+                                           int (*global_props_cb)(
+                                               const char *props,
                                                void *cbdata),
                                            void *cbdata)
 {
@@ -1388,6 +1409,7 @@ static int ossl_provider_register_child_cb(const OSSL_CORE_HANDLE *handle,
     struct provider_store_st *store = NULL;
     int ret = 0, i, max;
     OSSL_PROVIDER_CHILD_CB *child_cb;
+    char *propsstr = NULL;
 
     if ((store = get_provider_store(libctx)) == NULL)
         return 0;
@@ -1398,11 +1420,18 @@ static int ossl_provider_register_child_cb(const OSSL_CORE_HANDLE *handle,
     child_cb->prov = thisprov;
     child_cb->create_cb = create_cb;
     child_cb->remove_cb = remove_cb;
+    child_cb->global_props_cb = global_props_cb;
     child_cb->cbdata = cbdata;
 
     if (!CRYPTO_THREAD_write_lock(store->lock)) {
         OPENSSL_free(child_cb);
         return 0;
+    }
+    propsstr = evp_get_global_properties_str(libctx, 0);
+
+    if (propsstr != NULL) {
+        global_props_cb(propsstr, cbdata);
+        OPENSSL_free(propsstr);
     }
     max = sk_OSSL_PROVIDER_num(store->providers);
     for (i = 0; i < max; i++) {
@@ -1514,6 +1543,8 @@ static OSSL_FUNC_core_vset_error_fn core_vset_error;
 static OSSL_FUNC_core_set_error_mark_fn core_set_error_mark;
 static OSSL_FUNC_core_clear_last_error_mark_fn core_clear_last_error_mark;
 static OSSL_FUNC_core_pop_error_to_mark_fn core_pop_error_to_mark;
+static OSSL_FUNC_core_obj_add_sigid_fn core_obj_add_sigid;
+static OSSL_FUNC_core_obj_create_fn core_obj_create;
 #endif
 
 static const OSSL_PARAM *core_gettable_params(const OSSL_CORE_HANDLE *handle)
@@ -1573,7 +1604,8 @@ static OPENSSL_CORE_CTX *core_get_libctx(const OSSL_CORE_HANDLE *handle)
 }
 
 static int core_thread_start(const OSSL_CORE_HANDLE *handle,
-                             OSSL_thread_stop_handler_fn handfn)
+                             OSSL_thread_stop_handler_fn handfn,
+                             void *arg)
 {
     /*
      * We created this object originally and we know it is actually an
@@ -1581,7 +1613,7 @@ static int core_thread_start(const OSSL_CORE_HANDLE *handle,
      */
     OSSL_PROVIDER *prov = (OSSL_PROVIDER *)handle;
 
-    return ossl_init_thread_start(prov, prov->provctx, handfn);
+    return ossl_init_thread_start(prov, arg, handfn);
 }
 
 /*
@@ -1643,6 +1675,39 @@ static int core_pop_error_to_mark(const OSSL_CORE_HANDLE *handle)
 {
     return ERR_pop_to_mark();
 }
+
+static int core_obj_add_sigid(const OSSL_CORE_HANDLE *prov,
+                              const char *sign_name, const char *digest_name,
+                              const char *pkey_name)
+{
+    int sign_nid = OBJ_txt2nid(sign_name);
+    int digest_nid = OBJ_txt2nid(digest_name);
+    int pkey_nid = OBJ_txt2nid(pkey_name);
+
+    if (sign_nid == NID_undef)
+        return 0;
+
+    /*
+     * Check if it already exists. This is a success if so (even if we don't
+     * have nids for the digest/pkey)
+     */
+    if (OBJ_find_sigid_algs(sign_nid, NULL, NULL))
+        return 1;
+
+    if (digest_nid == NID_undef
+            || pkey_nid == NID_undef)
+        return 0;
+
+    return OBJ_add_sigid(sign_nid, digest_nid, pkey_nid);
+}
+
+static int core_obj_create(const OSSL_CORE_HANDLE *prov, const char *oid,
+                           const char *sn, const char *ln)
+{
+    /* Check if it already exists and create it if not */
+    return OBJ_txt2nid(oid) != NID_undef
+           || OBJ_create(oid, sn, ln) != NID_undef;
+}
 #endif /* FIPS_MODULE */
 
 /*
@@ -1698,7 +1763,7 @@ static const OSSL_DISPATCH core_dispatch_[] = {
     { OSSL_FUNC_PROVIDER_DEREGISTER_CHILD_CB,
         (void (*)(void))ossl_provider_deregister_child_cb },
     { OSSL_FUNC_PROVIDER_NAME,
-        (void (*)(void))OSSL_PROVIDER_name },
+        (void (*)(void))OSSL_PROVIDER_get0_name },
     { OSSL_FUNC_PROVIDER_GET0_PROVIDER_CTX,
         (void (*)(void))OSSL_PROVIDER_get0_provider_ctx },
     { OSSL_FUNC_PROVIDER_GET0_DISPATCH,
@@ -1707,6 +1772,8 @@ static const OSSL_DISPATCH core_dispatch_[] = {
         (void (*)(void))provider_up_ref_intern },
     { OSSL_FUNC_PROVIDER_FREE,
         (void (*)(void))provider_free_intern },
+    { OSSL_FUNC_CORE_OBJ_ADD_SIGID, (void (*)(void))core_obj_add_sigid },
+    { OSSL_FUNC_CORE_OBJ_CREATE, (void (*)(void))core_obj_create },
 #endif
     { 0, NULL }
 };

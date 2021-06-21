@@ -55,7 +55,8 @@ void *ASN1_d2i_bio(void *(*xnew) (void), d2i_of_void *d2i, BIO *in, void **x)
 
 #endif
 
-void *ASN1_item_d2i_bio(const ASN1_ITEM *it, BIO *in, void *x)
+void *ASN1_item_d2i_bio_ex(const ASN1_ITEM *it, BIO *in, void *x,
+                           OSSL_LIB_CTX *libctx, const char *propq)
 {
     BUF_MEM *b = NULL;
     const unsigned char *p;
@@ -69,14 +70,20 @@ void *ASN1_item_d2i_bio(const ASN1_ITEM *it, BIO *in, void *x)
         goto err;
 
     p = (const unsigned char *)b->data;
-    ret = ASN1_item_d2i(x, &p, len, it);
+    ret = ASN1_item_d2i_ex(x, &p, len, it, libctx, propq);
  err:
     BUF_MEM_free(b);
     return ret;
 }
 
+void *ASN1_item_d2i_bio(const ASN1_ITEM *it, BIO *in, void *x)
+{
+    return ASN1_item_d2i_bio_ex(it, in, x, NULL, NULL);
+}
+
 #ifndef OPENSSL_NO_STDIO
-void *ASN1_item_d2i_fp(const ASN1_ITEM *it, FILE *in, void *x)
+void *ASN1_item_d2i_fp_ex(const ASN1_ITEM *it, FILE *in, void *x,
+                          OSSL_LIB_CTX *libctx, const char *propq)
 {
     BIO *b;
     char *ret;
@@ -86,9 +93,14 @@ void *ASN1_item_d2i_fp(const ASN1_ITEM *it, FILE *in, void *x)
         return NULL;
     }
     BIO_set_fp(b, in, BIO_NOCLOSE);
-    ret = ASN1_item_d2i_bio(it, b, x);
+    ret = ASN1_item_d2i_bio_ex(it, b, x, libctx, propq);
     BIO_free(b);
     return ret;
+}
+
+void *ASN1_item_d2i_fp(const ASN1_ITEM *it, FILE *in, void *x)
+{
+    return ASN1_item_d2i_fp_ex(it, in, x, NULL, NULL);
 }
 #endif
 
@@ -115,7 +127,7 @@ int asn1_d2i_read_bio(BIO *in, BUF_MEM **pb)
         return -1;
     }
 
-    ERR_clear_error();
+    ERR_set_mark();
     for (;;) {
         diff = len - off;
         if (want >= diff) {
@@ -149,10 +161,10 @@ int asn1_d2i_read_bio(BIO *in, BUF_MEM **pb)
         if (inf & 0x80) {
             unsigned long e;
 
-            e = ERR_GET_REASON(ERR_peek_error());
+            e = ERR_GET_REASON(ERR_peek_last_error());
             if (e != ASN1_R_TOO_LONG)
                 goto err;
-            ERR_clear_error();
+            ERR_pop_to_mark();
         }
         i = q - p;            /* header length */
         off += i;               /* end of data */
@@ -235,6 +247,7 @@ int asn1_d2i_read_bio(BIO *in, BUF_MEM **pb)
     *pb = b;
     return off;
  err:
+    ERR_clear_last_mark();
     BUF_MEM_free(b);
     return -1;
 }

@@ -71,6 +71,7 @@ OSSL_STORE_open_ex(const char *uri, OSSL_LIB_CTX *libctx, const char *propq,
     OSSL_STORE_LOADER_CTX *loader_ctx = NULL;
     OSSL_STORE_CTX *ctx = NULL;
     char *propq_copy = NULL;
+    int no_loader_found = 1;
     char scheme_copy[256], *p, *schemes[2];
     size_t schemes_n = 0;
     size_t i;
@@ -113,6 +114,7 @@ OSSL_STORE_open_ex(const char *uri, OSSL_LIB_CTX *libctx, const char *propq,
         OSSL_TRACE1(STORE, "Looking up scheme %s\n", schemes[i]);
 #ifndef OPENSSL_NO_DEPRECATED_3_0
         if ((loader = ossl_store_get0_loader_int(schemes[i])) != NULL) {
+            no_loader_found = 0;
             if (loader->open_ex != NULL)
                 loader_ctx = loader->open_ex(loader, uri, libctx, propq,
                                              ui_method, ui_data);
@@ -122,11 +124,12 @@ OSSL_STORE_open_ex(const char *uri, OSSL_LIB_CTX *libctx, const char *propq,
 #endif
         if (loader == NULL
             && (fetched_loader =
-                OSSL_STORE_LOADER_fetch(schemes[i], libctx, propq)) != NULL) {
+                OSSL_STORE_LOADER_fetch(libctx, schemes[i], propq)) != NULL) {
             const OSSL_PROVIDER *provider =
-                OSSL_STORE_LOADER_provider(fetched_loader);
+                OSSL_STORE_LOADER_get0_provider(fetched_loader);
             void *provctx = OSSL_PROVIDER_get0_provider_ctx(provider);
 
+            no_loader_found = 0;
             loader_ctx = fetched_loader->p_open(provctx, uri);
             if (loader_ctx == NULL) {
                 OSSL_STORE_LOADER_free(fetched_loader);
@@ -141,10 +144,20 @@ OSSL_STORE_open_ex(const char *uri, OSSL_LIB_CTX *libctx, const char *propq,
         }
     }
 
-    if (loader != NULL)
-        OSSL_TRACE1(STORE, "Found loader for scheme %s\n", schemes[i]);
+    if (no_loader_found)
+        /*
+         * It's assumed that ossl_store_get0_loader_int() and
+         * OSSL_STORE_LOADER_fetch() report their own errors
+         */
+        goto err;
+
+    OSSL_TRACE1(STORE, "Found loader for scheme %s\n", schemes[i]);
 
     if (loader_ctx == NULL)
+        /*
+         * It's assumed that the loader's open() method reports its own
+         * errors
+         */
         goto err;
 
     OSSL_TRACE2(STORE, "Opened %s => %p\n", uri, (void *)loader_ctx);
@@ -346,7 +359,8 @@ int OSSL_STORE_find(OSSL_STORE_CTX *ctx, const OSSL_STORE_SEARCH *search)
             break;
         case OSSL_STORE_SEARCH_BY_KEY_FINGERPRINT:
             if (OSSL_PARAM_BLD_push_utf8_string(bld, OSSL_STORE_PARAM_DIGEST,
-                                                EVP_MD_name(search->digest), 0)
+                                                EVP_MD_get0_name(search->digest),
+                                                0)
                 && OSSL_PARAM_BLD_push_octet_string(bld,
                                                     OSSL_STORE_PARAM_FINGERPRINT,
                                                     search->string,
@@ -785,7 +799,7 @@ int OSSL_STORE_supports_search(OSSL_STORE_CTX *ctx, int search_type)
 
     if (ctx->fetched_loader != NULL) {
         void *provctx =
-            ossl_provider_ctx(OSSL_STORE_LOADER_provider(ctx->fetched_loader));
+            ossl_provider_ctx(OSSL_STORE_LOADER_get0_provider(ctx->fetched_loader));
         const OSSL_PARAM *params;
         const OSSL_PARAM *p_subject = NULL;
         const OSSL_PARAM *p_issuer = NULL;
@@ -874,11 +888,11 @@ OSSL_STORE_SEARCH *OSSL_STORE_SEARCH_by_key_fingerprint(const EVP_MD *digest,
         return NULL;
     }
 
-    if (digest != NULL && len != (size_t)EVP_MD_size(digest)) {
+    if (digest != NULL && len != (size_t)EVP_MD_get_size(digest)) {
         ERR_raise_data(ERR_LIB_OSSL_STORE,
                        OSSL_STORE_R_FINGERPRINT_SIZE_DOES_NOT_MATCH_DIGEST,
                        "%s size is %d, fingerprint size is %zu",
-                       EVP_MD_name(digest), EVP_MD_size(digest), len);
+                       EVP_MD_get0_name(digest), EVP_MD_get_size(digest), len);
         OPENSSL_free(search);
         return NULL;
     }
@@ -969,9 +983,9 @@ OSSL_STORE_CTX *OSSL_STORE_attach(BIO *bp, const char *scheme,
 #endif
     if (loader == NULL
         && (fetched_loader =
-            OSSL_STORE_LOADER_fetch(scheme, libctx, propq)) != NULL) {
+            OSSL_STORE_LOADER_fetch(libctx, scheme, propq)) != NULL) {
         const OSSL_PROVIDER *provider =
-            OSSL_STORE_LOADER_provider(fetched_loader);
+            OSSL_STORE_LOADER_get0_provider(fetched_loader);
         void *provctx = OSSL_PROVIDER_get0_provider_ctx(provider);
         OSSL_CORE_BIO *cbio = ossl_core_bio_new_from_bio(bp);
 
