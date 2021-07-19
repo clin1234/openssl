@@ -32,6 +32,7 @@
 #include <openssl/provider.h>
 #include <openssl/param_build.h>
 #include <openssl/x509v3.h>
+#include <openssl/dh.h>
 
 #include "helpers/ssltestlib.h"
 #include "testutil.h"
@@ -1435,7 +1436,7 @@ static int test_ktls(int test)
     struct ktls_test_cipher *cipher;
     int cis_ktls, sis_ktls;
 
-    OPENSSL_assert(test / 4 < NUM_KTLS_TEST_CIPHERS);
+    OPENSSL_assert(test / 4 < (int)NUM_KTLS_TEST_CIPHERS);
     cipher = &ktls_test_ciphers[test / 4];
 
     cis_ktls = (test & 1) != 0;
@@ -1449,7 +1450,7 @@ static int test_ktls_sendfile(int tst)
 {
     struct ktls_test_cipher *cipher;
 
-    OPENSSL_assert(tst < NUM_KTLS_TEST_CIPHERS);
+    OPENSSL_assert(tst < (int)NUM_KTLS_TEST_CIPHERS);
     cipher = &ktls_test_ciphers[tst];
 
     return execute_test_ktls_sendfile(cipher->tls_version, cipher->cipher);
@@ -4750,14 +4751,14 @@ static int set_ssl_groups(SSL *serverssl, SSL *clientssl, int clientmulti,
  * was offered in the resumption ClientHello.
  *
  * Using E for the number of EC groups and F for the number of FF groups:
- * E tests of ECDHE with TLS 1.3, client sends only one group
- * F tests of FFDHE with TLS 1.3, client sends only one group
- * E tests of ECDHE with TLS 1.2, client sends only one group
- * F tests of FFDHE with TLS 1.2, client sends only one group
  * E tests of ECDHE with TLS 1.3, server only has one group
  * F tests of FFDHE with TLS 1.3, server only has one group
  * E tests of ECDHE with TLS 1.2, server only has one group
  * F tests of FFDHE with TLS 1.2, server only has one group
+ * E tests of ECDHE with TLS 1.3, client sends only one group
+ * F tests of FFDHE with TLS 1.3, client sends only one group
+ * E tests of ECDHE with TLS 1.2, client sends only one group
+ * F tests of FFDHE with TLS 1.2, client sends only one group
  */
 static int test_negotiated_group(int idx)
 {
